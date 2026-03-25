@@ -1,20 +1,23 @@
 name: Build Trilink Custom Client
 
 on:
-  workflow_dispatch: # Disparo manual pelo botão no GitHub
+  workflow_dispatch:
 
 permissions:
-  contents: write # Permite que o robô salve o arquivo final
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
 
 jobs:
   build-windows:
     runs-on: windows-2022
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v4 # Atualizado para v4
+        uses: actions/checkout@v4
 
       - name: Setup Python
-        uses: actions/setup-python@v4
+        uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
@@ -35,7 +38,8 @@ jobs:
 
       - name: Install VCPKG Dependencies
         run: |
-          vcpkg install sdk7-windows:x64-windows-static-md
+          # Adicionamos o --classic para ele aceitar o pacote individual mesmo com o vcpkg.json presente
+          vcpkg install sdk7-windows --triplet x64-windows-static-md --classic
 
       - name: Build Flutter Windows
         env:
@@ -46,7 +50,7 @@ jobs:
           flutter build windows --release
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v4 # O PONTO CRÍTICO: Atualizado para v4
+        uses: actions/upload-artifact@v4
         with:
           name: Trilink-Suporte-Windows
           path: flutter/build/windows/runner/Release/
