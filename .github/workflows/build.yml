@@ -11,7 +11,7 @@ jobs:
     runs-on: windows-2022
     steps:
       - name: Checkout Repository
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4 # Atualizado para v4
 
       - name: Setup Python
         uses: actions/setup-python@v4
@@ -36,19 +36,17 @@ jobs:
       - name: Install VCPKG Dependencies
         run: |
           vcpkg install sdk7-windows:x64-windows-static-md
-          # Nota: O build do RustDesk é pesado. Se falhar por falta de lib, 
-          # instalaremos as específicas de vídeo/áudio aqui.
 
       - name: Build Flutter Windows
         env:
-          VCPKG_ROOT: C:\smoketest\vcpkg # Garante que o Rust ache as libs
+          VCPKG_ROOT: C:\smoketest\vcpkg
         run: |
           cd flutter
           flutter pub get
           flutter build windows --release
 
       - name: Upload Artifact
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4 # O PONTO CRÍTICO: Atualizado para v4
         with:
           name: Trilink-Suporte-Windows
           path: flutter/build/windows/runner/Release/
