@@ -1,4 +1,10 @@
 import os
+import sys
+
+# Garante que o Python use UTF-8 para evitar erros de caractere no Windows
+if sys.platform == "win32":
+    import codecs
+    sys.stdout = codecs.getwriter("utf-8")(sys.stdout.detach())
 
 # ================= CONFIGURAÇÕES TRILINK SOFTWARE =================
 NOME_DO_APP = "Trilink Suporte Remoto"
@@ -14,27 +20,27 @@ def replace_in_file(file_path, old_text, new_text):
         new_content = content.replace(old_text, new_text)
         with open(file_path, 'w', encoding='utf-8') as f:
             f.write(new_content)
-        print(f"✓ {file_path}")
+        # Removido o símbolo de check para evitar erro de encoding no terminal Windows
+        print(f"Patch aplicado em: {file_path}")
+    else:
+        print(f"Arquivo nao encontrado (pulando): {file_path}")
 
 def run_patch():
-    print(f"--- Iniciando Patch e Auto-Fix Trilink ---")
+    print("--- Iniciando Patch e Auto-Fix Trilink ---")
 
-    # 1. Configurações de Servidor e Nome (O que já fazíamos)
+    # 1. Configurações de Servidor e Nome
     replace_in_file('libs/hbb_common/src/config.rs', 'rendezvous_server: "".to_owned()', f'rendezvous_server: "{SERVIDOR}".to_owned()')
     replace_in_file('libs/hbb_common/src/config.rs', 'key: "".to_owned()', f'key: "{KEY}".to_owned()')
     replace_in_file('flutter/lib/common.dart', "static const String appName = 'RustDesk';", f"static const String appName = '{NOME_DO_APP}';")
     replace_in_file('flutter/lib/common/theme.dart', 'Colors.teal', f'Color({COR_HEX_FLUTTER})')
 
-    # 2. AUTO-FIX: Corrigindo erros de versão do Flutter (DialogTheme -> DialogThemeData)
-    # O log mostrou erro nas linhas de tema do arquivo common.dart
+    # 2. AUTO-FIX: Corrigindo incompatibilidades de versao do Flutter (DialogTheme -> DialogThemeData)
     print("Corrigindo incompatibilidades de UI do Flutter...")
     replace_in_file('flutter/lib/common.dart', 'DialogTheme', 'DialogThemeData')
     replace_in_file('flutter/lib/common.dart', 'TabBarTheme', 'TabBarThemeData')
-    
-    # Corrigindo erro de String nula (String? -> String) reportado no log
     replace_in_file('flutter/lib/common/widgets/dialog.dart', 'String? title', 'String title')
 
-    print("\n--- Patch e correções aplicadas! ---")
+    print("--- Patch e correcoes aplicadas com sucesso! ---")
 
 if __name__ == "__main__":
     run_patch()
