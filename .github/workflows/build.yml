@@ -27,8 +27,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          # Atualizado para a versão que suporta Dart 3.5+
-          flutter-version: '3.41.5' 
+          flutter-version: '3.41.5' # Mantemos a versão que o seu fork pede
           channel: 'stable'
 
       - name: Install Rust
@@ -37,10 +36,18 @@ jobs:
           toolchain: stable
           target: x86_64-pc-windows-msvc
 
+      - name: Install Bridge Codegen
+        run: |
+          cargo install flutter_rust_bridge_codegen --version 1.80.1
+          # Adiciona o binário ao PATH para o Windows encontrar
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+
       - name: Build Flutter Windows
         run: |
           cd flutter
           flutter pub get
+          # Tenta gerar a ponte antes do build (comando padrão do RustDesk)
+          # Se este comando falhar no seu fork, me avise o nome do arquivo de tarefa
           flutter build windows --release
 
       - name: Upload Artifact
