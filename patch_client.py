@@ -23,7 +23,7 @@ def replace_in_file(file_path, old_text, new_text):
         print(f"Corrigido: {file_path}")
 
 def run_patch():
-    print("--- Iniciando Super Patch Trilink ---")
+    print("--- Iniciando Super Patch Trilink v3.0 (Hard Fix) ---")
 
     # 1. Branding e Servidor
     replace_in_file('libs/hbb_common/src/config.rs', 'rendezvous_server: "".to_owned()', f'rendezvous_server: "{SERVIDOR}".to_owned()')
@@ -31,20 +31,20 @@ def run_patch():
     replace_in_file('flutter/lib/common.dart', "static const String appName = 'RustDesk';", f"static const String appName = '{NOME_DO_APP}';")
     replace_in_file('flutter/lib/common/theme.dart', 'Colors.teal', f'Color({COR_HEX_FLUTTER})')
 
-    # 2. CORREÇÕES DE COMPATIBILIDADE (Onde o erro aconteceu)
-    print("Aplicando correcoes de Null Safety e Temas...")
+    # 2. CORREÇÕES DE NULL SAFETY (Onde o build travou)
+    print("Aplicando correcoes de Null Safety agressivas...")
     
-    # Erro de DialogTheme e TabBarTheme (mudança de nome no Flutter novo)
+    # Corrige os erros de parâmetro 'id' e 'idServer' em common.dart
+    replace_in_file('flutter/lib/common.dart', 'String id,', 'String id = "",')
+    replace_in_file('flutter/lib/common.dart', 'String idServer,', 'String idServer = "",')
+    
+    # Corrige os erros de DialogTheme e TabBarTheme (versões novas do Flutter)
     replace_in_file('flutter/lib/common.dart', 'DialogTheme', 'DialogThemeData')
     replace_in_file('flutter/lib/common.dart', 'TabBarTheme', 'TabBarThemeData')
     
-    # Erro no arquivo dialog.dart (title não pode ser nulo)
-    # Trocamos 'String title' por 'String? title' para o Flutter aceitar valores nulos
+    # Corrige o erro de 'title' no dialog.dart
     replace_in_file('flutter/lib/common/widgets/dialog.dart', 'final String title;', 'final String? title;')
     replace_in_file('flutter/lib/common/widgets/dialog.dart', 'required this.title', 'this.title')
-    
-    # Erro no common.dart (String? vs String)
-    replace_in_file('flutter/lib/common.dart', 'String? id', 'String id')
 
     print("--- Super Patch Finalizado ---")
 

@@ -27,7 +27,7 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.41.5'
+          flutter-version: '3.24.0' # Versao mais estavel para este codigo
           channel: 'stable'
 
       - name: Install Rust
@@ -36,17 +36,11 @@ jobs:
           toolchain: stable
           target: x86_64-pc-windows-msvc
 
-      - name: Generate Rust-Flutter Bridge
-        run: |
-          cargo install flutter_rust_bridge_codegen --version 1.80.1
-          # Comando para gerar os arquivos de ponte necessários para o build
-          flutter_rust_bridge_codegen --rust-input libs/hbb_common/src/bridge_generated.rs --dart-output flutter/lib/generated_bridge.dart || true
-          # Nota: o '|| true' evita que o build pare se o arquivo já existir
-
       - name: Build Flutter Windows
         run: |
           cd flutter
           flutter pub get
+          # O RustDesk gera a ponte automaticamente durante o build se o ambiente estiver certo
           flutter build windows --release
 
       - name: Upload Artifact
