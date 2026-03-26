@@ -36,17 +36,11 @@ jobs:
           toolchain: stable
           target: x86_64-pc-windows-msvc
 
-      - name: Install VCPKG Dependencies
-        run: |
-          # Adicionamos o --classic para ele aceitar o pacote individual mesmo com o vcpkg.json presente
-          vcpkg install sdk7-windows --triplet x64-windows-static-md --classic
-
       - name: Build Flutter Windows
-        env:
-          VCPKG_ROOT: C:\smoketest\vcpkg
         run: |
           cd flutter
           flutter pub get
+          # O Flutter vai chamar o Rust automaticamente para compilar o 'bridge'
           flutter build windows --release
 
       - name: Upload Artifact
