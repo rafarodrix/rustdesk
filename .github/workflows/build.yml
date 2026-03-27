@@ -35,8 +35,8 @@ jobs:
           git clone https://github.com/microsoft/vcpkg $env:USERPROFILE\vcpkg
           & $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat
           echo "VCPKG_ROOT=$env:USERPROFILE\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
-          # Em 'manifest mode', o vcpkg lê o arquivo vcpkg.json na raiz do projeto e instala tudo sozinho
-          & $env:USERPROFILE\vcpkg\vcpkg.exe install --triplet=x64-windows-static
+          $pkgs = @('libvpx:x64-windows-static','libyuv:x64-windows-static','opus:x64-windows-static','aom:x64-windows-static')
+          & $env:USERPROFILE\vcpkg\vcpkg.exe install $pkgs
 
       - name: Setup Rust (Stable)
         uses: dtolnay/rust-toolchain@stable
