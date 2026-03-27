@@ -3,7 +3,7 @@
 Set-StrictMode -Version Latest
 
 $PortalBaseUrl = "https://ajuda.trilinksoftware.com.br"
-$DiscoveryToken = "3dacac7beba253a33e953e6b2f970ac594c06b3152ab285e7015085b4494ee44"
+$DiscoveryToken = "__SET_ME_DISCOVERY_TOKEN__"
 $AgentVersion = "trilink-agent-v1"
 
 $StateDir = Join-Path $env:ProgramData "Trilink\RemoteAgent"
@@ -44,13 +44,81 @@ function Get-ServiceStatus {
     return "stopped"
 }
 
-function Post-Json {
+function Get-HttpStatusCodeFromException {
+    param([System.Exception]$Exception)
+
+    if ($null -eq $Exception) { return $null }
+    if ($Exception.PSObject.Properties.Match("Response").Count -eq 0) { return $null }
+    if ($null -eq $Exception.Response) { return $null }
+
+    if ($Exception.Response.PSObject.Properties.Match("StatusCode").Count -eq 0) {
+        return $null
+    }
+
+    $statusCode = $Exception.Response.StatusCode
+    if ($statusCode -is [int]) { return $statusCode }
+    if ($statusCode.PSObject.Properties.Match("value__").Count -gt 0) {
+        return [int]$statusCode.value__
+    }
+    return $null
+}
+
+function Post-JsonWithRetry {
     param(
         [string]$Url,
-        [hashtable]$Payload
+        [hashtable]$Payload,
+        [int]$MaxAttempts = 4
     )
+
     $json = $Payload | ConvertTo-Json -Depth 10
-    Invoke-RestMethod -Method Post -Uri $Url -ContentType "application/json" -Body $json | Out-Null
+    $backoffSeconds = @(0, 3, 10, 25)
+
+    for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
+        try {
+            $response = Invoke-WebRequest `
+                -Method Post `
+                -Uri $Url `
+                -ContentType "application/json" `
+                -Body $json `
+                -TimeoutSec 20 `
+                -UseBasicParsing
+
+            $code = [int]$response.StatusCode
+            Write-Log "Discover HTTP $code na tentativa $attempt/$MaxAttempts."
+            if ($code -ge 200 -and $code -lt 300) {
+                return $true
+            }
+
+            if (($code -eq 429 -or $code -ge 500) -and $attempt -lt $MaxAttempts) {
+                $sleep = $backoffSeconds[[Math]::Min($attempt, $backoffSeconds.Count - 1)]
+                Write-Log "Resposta transiente ($code). Aguardando ${sleep}s para retry."
+                Start-Sleep -Seconds $sleep
+                continue
+            }
+
+            return $false
+        } catch {
+            $code = Get-HttpStatusCodeFromException -Exception $_.Exception
+            $message = $_.Exception.Message
+            if ($code) {
+                Write-Log "Erro HTTP $code na tentativa $attempt/${MaxAttempts}: $message"
+            } else {
+                Write-Log "Erro de rede na tentativa $attempt/${MaxAttempts}: $message"
+            }
+
+            $shouldRetry = (($code -eq $null) -or ($code -eq 429) -or ($code -ge 500))
+            if ($shouldRetry -and $attempt -lt $MaxAttempts) {
+                $sleep = $backoffSeconds[[Math]::Min($attempt, $backoffSeconds.Count - 1)]
+                Write-Log "Falha transiente. Aguardando ${sleep}s para retry."
+                Start-Sleep -Seconds $sleep
+                continue
+            }
+
+            return $false
+        }
+    }
+
+    return $false
 }
 
 try {
@@ -78,8 +146,12 @@ try {
     }
 
     $url = "$($PortalBaseUrl.TrimEnd('/'))/api/remote/agents/discover"
-    Post-Json -Url $url -Payload $payload
-    Write-Log "Discover enviado com sucesso para $url | rustdeskId=$rustdeskId"
+    $ok = Post-JsonWithRetry -Url $url -Payload $payload
+    if ($ok) {
+        Write-Log "Discover enviado com sucesso para $url | rustdeskId=$rustdeskId"
+    } else {
+        Write-Log "Discover falhou apos retries | rustdeskId=$rustdeskId"
+    }
 } catch {
     Write-Log "Falha no agente: $($_.Exception.Message)"
 }

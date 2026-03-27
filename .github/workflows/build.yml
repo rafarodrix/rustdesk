@@ -37,7 +37,9 @@ jobs:
       VCPKG_COMMIT_ID: 120deac3062162151622ca4860575a33844ba10b
       FLUTTER_VERSION: 3.24.5
       NSIS_SCRIPT: res/nsis/rustdesk-installer.nsi
-      AGENT_SCRIPT_PATH: trilink-agente.ps1
+      AGENT_SCRIPT_TEMPLATE: trilink-agente.ps1
+      AGENT_SCRIPT_PATH: dist/trilink-agente.generated.ps1
+      REMOTE_DISCOVERY_TOKEN: ${{ secrets.REMOTE_DISCOVERY_TOKEN }}
       NSIS_OUTPUT: dist/Trilink-Suporte-Installer.exe
       PORTAL_METADATA_ENDPOINT: /api/remote/rustdesk/build-metadata
       PORTAL_API_BASE_URL: ${{ secrets.PORTAL_API_BASE_URL }}
@@ -167,32 +169,50 @@ jobs:
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe "${{ env.SINGLE_EXE }}"
 
+      - name: Prepare Agent Script (from Secret)
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if (-not (Test-Path "$env:AGENT_SCRIPT_TEMPLATE")) {
+            throw "Template do agente nao encontrado: $env:AGENT_SCRIPT_TEMPLATE"
+          }
+
+          $content = Get-Content -Raw -Path "$env:AGENT_SCRIPT_TEMPLATE"
+          if ([string]::IsNullOrWhiteSpace("$env:REMOTE_DISCOVERY_TOKEN")) {
+            Write-Host "Aviso: REMOTE_DISCOVERY_TOKEN nao definido no GitHub Secrets. O agente sera gerado com placeholder."
+          } else {
+            $content = $content.Replace("__SET_ME_DISCOVERY_TOKEN__", "$env:REMOTE_DISCOVERY_TOKEN")
+          }
+
+          $content | Set-Content -Path "$env:AGENT_SCRIPT_PATH" -Encoding utf8
+          Write-Host "Agente preparado em: $env:AGENT_SCRIPT_PATH"
+
       - name: Install NSIS
         run: |
           choco install nsis -y --no-progress
           makensis /VERSION
 
       - name: Build NSIS Installer
-        continue-on-error: true
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
-          if ((Test-Path "$env:NSIS_SCRIPT") -and (Test-Path "$env:AGENT_SCRIPT_PATH")) {
-            makensis `
-              /DAPP_NAME="Trilink Suporte Remoto" `
-              /DAPP_EXE="rustdesk.exe" `
-              /DAPP_SOURCE_DIR="$pwd\\$env:OUTPUT_DIR" `
-              /DAGENT_SCRIPT="$pwd\\$env:AGENT_SCRIPT_PATH" `
-              /DOUTFILE="$pwd\\$env:NSIS_OUTPUT" `
-              "$env:NSIS_SCRIPT"
-            if (Test-Path "$env:NSIS_OUTPUT") {
-              "NSIS_BUILT=true" | Out-File -FilePath $env:GITHUB_ENV -Append
-              Write-Host "NSIS installer gerado em $env:NSIS_OUTPUT"
-            } else {
-              throw "Falha: makensis executou, mas nao gerou o arquivo esperado."
-            }
+          if (-not (Test-Path "$env:NSIS_SCRIPT")) {
+            throw "Script NSIS nao encontrado: $env:NSIS_SCRIPT"
+          }
+          if (-not (Test-Path "$env:AGENT_SCRIPT_PATH")) {
+            throw "Script do agente gerado nao encontrado: $env:AGENT_SCRIPT_PATH"
+          }
+          makensis `
+            /DAPP_NAME="Trilink Suporte Remoto" `
+            /DAPP_EXE="rustdesk.exe" `
+            /DAPP_SOURCE_DIR="$pwd\\$env:OUTPUT_DIR" `
+            /DAGENT_SCRIPT="$pwd\\$env:AGENT_SCRIPT_PATH" `
+            /DOUTFILE="$pwd\\$env:NSIS_OUTPUT" `
+            "$env:NSIS_SCRIPT"
+          if (Test-Path "$env:NSIS_OUTPUT") {
+            "NSIS_BUILT=true" | Out-File -FilePath $env:GITHUB_ENV -Append
+            Write-Host "NSIS installer gerado em $env:NSIS_OUTPUT"
           } else {
-            Write-Host "Aviso: script NSIS ou agente nao encontrado (NSIS=$env:NSIS_SCRIPT, Agent=$env:AGENT_SCRIPT_PATH). Etapa ignorada."
             "NSIS_BUILT=false" | Out-File -FilePath $env:GITHUB_ENV -Append
+            throw "Falha: makensis executou, mas nao gerou o instalador esperado."
           }
 
       - name: Pack output
@@ -242,8 +262,16 @@ jobs:
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.ARTIFACT_NAME }}-${{ env.BUILD_VERSION }}
+          name: Trilink-Suporte-Runtime-ZIP-${{ env.BUILD_VERSION }}
           path: ${{ env.RELEASE_ZIP }}
+          if-no-files-found: error
+
+      - name: Upload Primary Package (Installer)
+        if: env.NSIS_BUILT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Trilink-Suporte-PRIMARY-${{ env.BUILD_VERSION }}
+          path: ${{ env.NSIS_OUTPUT }}
           if-no-files-found: error
 
       - name: Upload NSIS Installer
@@ -335,8 +363,16 @@ jobs:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.release_tag }}
           files: |
             ${{ env.RELEASE_ZIP }}
+            ${{ env.SINGLE_EXE }}
             ${{ env.CHECKSUM_FILE }}
             ${{ env.DIAG_FILE }}
           generate_release_notes: true
           draft: false
           prerelease: false
+
+      - name: Publish GitHub Release (NSIS Installer)
+        if: (github.ref_type == 'tag' || github.event.inputs.publish_release == 'true') && env.NSIS_BUILT == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.release_tag }}
+          files: ${{ env.NSIS_OUTPUT }}
