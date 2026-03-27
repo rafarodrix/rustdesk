@@ -332,8 +332,18 @@ jobs:
             generatedAtUtc = $diag.generatedAtUtc
           }
 
-          Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json" -Headers @{ Authorization = "Bearer $env:PORTAL_API_TOKEN" } -Body ($payload | ConvertTo-Json -Depth 10)
-          Write-Host "Build metadata publicado em: $url"
+          try {
+            Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json" -Headers @{ Authorization = "Bearer $env:PORTAL_API_TOKEN" } -Body ($payload | ConvertTo-Json -Depth 10)
+            Write-Host "Build metadata publicado em: $url"
+          } catch {
+            $statusCode = $null
+            if ($_.Exception.Response -and $_.Exception.Response.StatusCode) {
+              $statusCode = [int]$_.Exception.Response.StatusCode
+            }
+            Write-Warning "Falha ao publicar metadata no portal. Status=$statusCode URL=$url Erro=$($_.Exception.Message)"
+            Write-Host "Continuando o pipeline sem bloquear release por falha de metadata."
+            exit 0
+          }
 
       - name: Deployment Summary
         if: always()
