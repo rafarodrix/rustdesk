@@ -120,6 +120,22 @@ jobs:
         run: |
           python .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
 
+      - name: Prepare folder for single-exe packing
+        run: |
+          if (Test-Path rustdesk) { Remove-Item -Recurse -Force rustdesk }
+          New-Item -ItemType Directory -Force -Path rustdesk | Out-Null
+          Copy-Item -Path "$env:OUTPUT_DIR\*" -Destination rustdesk -Recurse -Force
+
+      - name: Build self-extracted executable
+        shell: bash
+        run: |
+          pushd ./libs/portable
+          pip3 install -r requirements.txt
+          python3 ./generate.py -f ../../rustdesk/ -o . -e ../../rustdesk/rustdesk.exe
+          popd
+          mkdir -p ./SignOutput
+          mv ./target/release/rustdesk-portable-packer.exe ./SignOutput/rustdesk-single-exe-windows-x64.exe
+
       - name: Install NSIS
         run: |
           choco install nsis -y --no-progress
@@ -177,6 +193,12 @@ jobs:
         with:
           name: Trilink-Suporte-Installer-NSIS
           path: ${{ env.NSIS_OUTPUT }}
+
+      - name: Upload Single EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: Trilink-Suporte-Single-EXE
+          path: SignOutput/rustdesk-single-exe-windows-x64.exe
 
       - name: Publish GitHub Release
         if: github.ref_type == 'tag' || github.event.inputs.publish_release == 'true'
