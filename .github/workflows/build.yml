@@ -29,6 +29,7 @@ jobs:
     env:
       ARTIFACT_NAME: Trilink-Suporte-Windows
       OUTPUT_DIR: flutter/build/windows/runner/Release
+      VCPKG_COMMIT_ID: 120deac3062162151622ca4860575a33844ba10b
 
     steps:
       # [OTIMIZAÇÃO] Validação movida para o topo (Fail-fast)
@@ -57,13 +58,13 @@ jobs:
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
           clang --version
 
-      # [CORREÇÃO CRÍTICA] Comando ajustado para o Modo Manifest do VCPKG
       - name: Setup VCPKG and Video Codecs
         run: |
           git clone https://github.com/microsoft/vcpkg $env:USERPROFILE\vcpkg
-          & $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat
+          git -C $env:USERPROFILE\vcpkg checkout $env:VCPKG_COMMIT_ID
+          & $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat -disableMetrics
           echo "VCPKG_ROOT=$env:USERPROFILE\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
-          & $env:USERPROFILE\vcpkg\vcpkg.exe install --triplet x64-windows-static
+          & $env:USERPROFILE\vcpkg\vcpkg.exe install --triplet x64-windows-static --x-install-root="$env:USERPROFILE\vcpkg\installed"
 
       - name: Setup Rust (Stable)
         uses: dtolnay/rust-toolchain@stable
