@@ -264,11 +264,11 @@ jobs:
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Trilink Enterprise Build Summary"
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
           Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Build version: **$env:BUILD_VERSION**"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Git SHA: `${{ github.sha }}`"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Release zip: `$env:RELEASE_ZIP`"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Single EXE: `$env:SINGLE_EXE`"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- NSIS output: `$env:NSIS_OUTPUT` (built=`$env:NSIS_BUILT`)"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Checksums file: `$env:CHECKSUM_FILE`"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Git SHA: ${{ github.sha }}"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Release zip: $env:RELEASE_ZIP"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Single EXE: $env:SINGLE_EXE"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- NSIS output: $env:NSIS_OUTPUT (built=$env:NSIS_BUILT)"
+          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Checksums file: $env:CHECKSUM_FILE"
 
       - name: Publish GitHub Release
         if: github.ref_type == 'tag' || github.event.inputs.publish_release == 'true'
