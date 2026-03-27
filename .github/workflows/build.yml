@@ -8,28 +8,29 @@ jobs:
     runs-on: windows-2022
     defaults:
       run:
-        shell: pwsh # Força o uso do PowerShell para os scripts avançados
+        shell: pwsh
     
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          submodules: recursive # OBRIGATÓRIO: Baixa as dependências ocultas do RustDesk
+          submodules: recursive
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      - name: Run Trilink Patch (Branding Oficial)
+      - name: Run Trilink Patch
         run: python patch_client.py
 
-      - name: Install LLVM/Clang (O Motor do Bindgen)
+      - name: Setup LLVM/Clang (O Motor do Bindgen)
         run: |
-          choco install -y llvm --version=15.0.2
+          # Aproveita o LLVM 20+ nativo do Github Actions
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+          clang --version
 
-      - name: Setup VCPKG e Codecs de Vídeo (O Passo mais Demorado)
+      - name: Setup VCPKG e Codecs de Vídeo (Motor C++)
         run: |
           git clone https://github.com/microsoft/vcpkg $env:USERPROFILE\vcpkg
           & $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat
@@ -46,14 +47,12 @@ jobs:
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
-          # A comunidade recomenda usar a versão padrão do runner ao invés de forçar downgrade
           flutter-version: '3.19.0' 
 
       - name: Generate Rust-Flutter Bridge
         run: |
           cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid
           $env:Path += ";$env:USERPROFILE\.cargo\bin"
-          # O comando exato usado no run.sh oficial do repositório
           flutter_rust_bridge_codegen --rust-input ./libs/hbb_common/src/bridge_generated.rs --dart-output ./flutter/lib/generated_bridge.dart || flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart
 
       - name: Build Final (Flutter Windows)
