@@ -31,6 +31,8 @@ jobs:
       OUTPUT_DIR: flutter/build/windows/x64/runner/Release
       VCPKG_COMMIT_ID: 120deac3062162151622ca4860575a33844ba10b
       FLUTTER_VERSION: 3.24.5
+      NSIS_SCRIPT: res/nsis/rustdesk-installer.nsi
+      NSIS_OUTPUT: dist/Trilink-Suporte-Installer.exe
 
     steps:
       # [OTIMIZAÇÃO] Validação movida para o topo (Fail-fast)
@@ -118,6 +120,32 @@ jobs:
         run: |
           python .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
 
+      - name: Install NSIS
+        run: |
+          choco install nsis -y --no-progress
+          makensis /VERSION
+
+      - name: Build NSIS Installer
+        run: |
+          New-Item -ItemType Directory -Force -Path dist | Out-Null
+          if (Test-Path "$env:NSIS_SCRIPT") {
+            makensis `
+              /DAPP_NAME="Trilink Suporte Remoto" `
+              /DAPP_EXE="rustdesk.exe" `
+              /DAPP_SOURCE_DIR="$pwd\\$env:OUTPUT_DIR" `
+              /DOUTFILE="$pwd\\$env:NSIS_OUTPUT" `
+              "$env:NSIS_SCRIPT"
+            if (Test-Path "$env:NSIS_OUTPUT") {
+              "NSIS_BUILT=true" | Out-File -FilePath $env:GITHUB_ENV -Append
+              Write-Host "NSIS installer gerado em $env:NSIS_OUTPUT"
+            } else {
+              throw "Falha: makensis executou, mas nao gerou o arquivo esperado."
+            }
+          } else {
+            Write-Host "Aviso: script NSIS nao encontrado em $env:NSIS_SCRIPT. Etapa ignorada."
+            "NSIS_BUILT=false" | Out-File -FilePath $env:GITHUB_ENV -Append
+          }
+
       - name: Pack output
         run: |
           if (-Not (Test-Path "$env:OUTPUT_DIR")) {
@@ -142,6 +170,13 @@ jobs:
         with:
           name: ${{ env.ARTIFACT_NAME }}
           path: ${{ env.RELEASE_ZIP }}
+
+      - name: Upload NSIS Installer
+        if: env.NSIS_BUILT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Trilink-Suporte-Installer-NSIS
+          path: ${{ env.NSIS_OUTPUT }}
 
       - name: Publish GitHub Release
         if: github.ref_type == 'tag' || github.event.inputs.publish_release == 'true'
