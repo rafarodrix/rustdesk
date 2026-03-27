@@ -30,6 +30,7 @@ jobs:
       ARTIFACT_NAME: Trilink-Suporte-Windows
       OUTPUT_DIR: flutter/build/windows/runner/Release
       VCPKG_COMMIT_ID: 120deac3062162151622ca4860575a33844ba10b
+      FLUTTER_VERSION: 3.24.5
 
     steps:
       # [OTIMIZAÇÃO] Validação movida para o topo (Fail-fast)
@@ -72,16 +73,27 @@ jobs:
           targets: x86_64-pc-windows-msvc
 
       - name: Setup Flutter (Stable)
-        uses: subosito/flutter-action@v2
+        uses: subosito/flutter-action@v2.12.0
         with:
           channel: stable
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           cache: true
+
+      - name: Apply Flutter compatibility patch
+        run: |
+          if ("${{ env.FLUTTER_VERSION }}" -eq "3.24.5") {
+            git apply .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
+          }
 
       - name: Generate Rust-Flutter Bridge
         run: |
           cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid
           $env:Path += ";$env:USERPROFILE\.cargo\bin"
-          flutter_rust_bridge_codegen --rust-input ./libs/hbb_common/src/bridge_generated.rs --dart-output ./flutter/lib/generated_bridge.dart || flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart
+          if (Test-Path "./libs/hbb_common/src/bridge_generated.rs") {
+            flutter_rust_bridge_codegen --rust-input ./libs/hbb_common/src/bridge_generated.rs --dart-output ./flutter/lib/generated_bridge.dart
+          } else {
+            flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart
+          }
 
       - name: Build Final (Flutter Windows)
         run: |
