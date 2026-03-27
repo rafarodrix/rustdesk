@@ -96,6 +96,10 @@ jobs:
         run: |
           cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid
           $env:Path += ";$env:USERPROFILE\.cargo\bin"
+          cd flutter
+          flutter config --no-analytics
+          flutter pub get
+          cd ..
           if (Test-Path "./libs/hbb_common/src/bridge_generated.rs") {
             flutter_rust_bridge_codegen --rust-input ./libs/hbb_common/src/bridge_generated.rs --dart-output ./flutter/lib/generated_bridge.dart
           } else {
