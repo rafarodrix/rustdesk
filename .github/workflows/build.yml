@@ -28,7 +28,7 @@ jobs:
 
     env:
       ARTIFACT_NAME: Trilink-Suporte-Windows
-      OUTPUT_DIR: flutter/build/windows/runner/Release
+      OUTPUT_DIR: flutter/build/windows/x64/runner/Release
       VCPKG_COMMIT_ID: 120deac3062162151622ca4860575a33844ba10b
       FLUTTER_VERSION: 3.24.5
 
@@ -106,15 +106,24 @@ jobs:
             flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart
           }
 
-      - name: Build Final (Flutter Windows)
+      - name: Build Final (RustDesk Windows Upstream Mode)
         run: |
-          cd flutter
-          flutter pub get
-          flutter build windows --release
+          python .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
 
       - name: Pack output
         run: |
-          if (-Not (Test-Path "$env:OUTPUT_DIR")) { throw "Output de build nao encontrado: $env:OUTPUT_DIR" }
+          if (-Not (Test-Path "$env:OUTPUT_DIR")) {
+            Write-Host "Output nao encontrado em $env:OUTPUT_DIR"
+            if (Test-Path "flutter/build/windows/x64/CMakeFiles/CMakeError.log") {
+              Write-Host "===== CMakeError.log ====="
+              Get-Content "flutter/build/windows/x64/CMakeFiles/CMakeError.log"
+            }
+            if (Test-Path "flutter/build/windows/x64/CMakeFiles/CMakeOutput.log") {
+              Write-Host "===== CMakeOutput.log ====="
+              Get-Content "flutter/build/windows/x64/CMakeFiles/CMakeOutput.log"
+            }
+            throw "Build final nao gerou pasta Release."
+          }
           $version = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } elseif ("${{ github.event.inputs.release_tag }}") { "${{ github.event.inputs.release_tag }}" } else { "manual-${{ github.run_number }}" }
           $zip = "$env:ARTIFACT_NAME-$version.zip"
           Compress-Archive -Path "$env:OUTPUT_DIR\*" -DestinationPath $zip -Force
