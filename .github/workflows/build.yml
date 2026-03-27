@@ -1,4 +1,4 @@
-name: Build Trilink Custom Client
+name: Trilink Enterprise Build
 
 on:
   workflow_dispatch:
@@ -6,43 +6,63 @@ on:
 jobs:
   build-windows:
     runs-on: windows-2022
+    defaults:
+      run:
+        shell: pwsh # Força o uso do PowerShell para os scripts avançados
+    
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive # OBRIGATÓRIO: Baixa as dependências ocultas do RustDesk
 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.x'
 
-      - name: Run Trilink Patch
+      - name: Run Trilink Patch (Branding Oficial)
         run: python patch_client.py
+
+      - name: Install LLVM/Clang (O Motor do Bindgen)
+        run: |
+          choco install -y llvm --version=15.0.2
+          echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Setup VCPKG e Codecs de Vídeo (O Passo mais Demorado)
+        run: |
+          git clone https://github.com/microsoft/vcpkg $env:USERPROFILE\vcpkg
+          & $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat
+          echo "VCPKG_ROOT=$env:USERPROFILE\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
+          $pkgs = @('libvpx:x64-windows-static','libyuv:x64-windows-static','opus:x64-windows-static','aom:x64-windows-static')
+          & $env:USERPROFILE\vcpkg\vcpkg.exe install $pkgs
+
+      - name: Setup Rust (Stable)
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
 
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0' # Subindo para a 3.24 com o patch de sintaxe novo
           channel: 'stable'
+          # A comunidade recomenda usar a versão padrão do runner ao invés de forçar downgrade
+          flutter-version: '3.19.0' 
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Generate Bridge
+      - name: Generate Rust-Flutter Bridge
         run: |
-          cargo install flutter_rust_bridge_codegen --version 1.80.1
-          # Adiciona o binário ao PATH do Windows para ser reconhecido no próximo passo
-          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
-          # Comando de geração
-          $HOME/.cargo/bin/flutter_rust_bridge_codegen --rust-input libs/hbb_common/src/bridge_generated.rs --dart-output flutter/lib/generated_bridge.dart
-        continue-on-error: true
+          cargo install flutter_rust_bridge_codegen --version 1.80.1 --features uuid
+          $env:Path += ";$env:USERPROFILE\.cargo\bin"
+          # O comando exato usado no run.sh oficial do repositório
+          flutter_rust_bridge_codegen --rust-input ./libs/hbb_common/src/bridge_generated.rs --dart-output ./flutter/lib/generated_bridge.dart || flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart
 
-      - name: Build Flutter Windows
+      - name: Build Final (Flutter Windows)
         run: |
           cd flutter
           flutter pub get
           flutter build windows --release
 
-      - name: Upload Artifact
+      - name: Upload Artifact Trilink
         uses: actions/upload-artifact@v4
         with:
           name: Trilink-Suporte-Windows
