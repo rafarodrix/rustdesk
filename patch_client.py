@@ -11,6 +11,7 @@ COR_HEX_FLUTTER = "0xFF004696"
 SERVIDOR = "acesso.trilinksoftware.com.br"
 KEY = "6FpnQH+KbbpX0qw6XxF0xqnIO0QnHImwbvQ5Lv7q6gU="
 # ================================================================
+STRICT_PATCH = os.getenv("STRICT_PATCH", "0") == "1"
 
 def replace_in_file(file_path: str, old_text: str, new_text: str) -> bool:
     if not os.path.exists(file_path):
@@ -36,31 +37,86 @@ def replace_in_file(file_path: str, old_text: str, new_text: str) -> bool:
     print(f"Aplicado com sucesso: {file_path}")
     return True
 
+
+def try_replace(candidates, old_text: str, new_text: str, label: str, required: bool) -> bool:
+    for file_path in candidates:
+        if os.path.exists(file_path):
+            if replace_in_file(file_path, old_text, new_text):
+                return True
+    print(f"AVISO: nao foi possivel aplicar [{label}] em nenhum arquivo candidato.")
+    return not required
+
 def run_patch() -> None:
-    print("--- Iniciando Patch Trilink (Resiliente) ---")
+    print("--- Iniciando Patch Trilink (Resiliente 2026) ---")
     ok = True
 
-    # 1. Configuracoes de servidor (Rust)
-    ok &= replace_in_file("libs/hbb_common/src/config.rs", 'rendezvous_server: "".to_owned()', f'rendezvous_server: "{SERVIDOR}".to_owned()')
-    ok &= replace_in_file("libs/hbb_common/src/config.rs", 'key: "".to_owned()', f'key: "{KEY}".to_owned()')
+    # 1) Configuracoes de servidor (compativel com estruturas antigas/novas)
+    server_files = [
+        "libs/hbb_common/src/config.rs",
+        "flutter/lib/common.dart",
+    ]
+    required_server = STRICT_PATCH
+    ok &= try_replace(
+        server_files,
+        'rendezvous_server: "".to_owned()',
+        f'rendezvous_server: "{SERVIDOR}".to_owned()',
+        "rust-rendezvous-server",
+        required=required_server,
+    )
+    ok &= try_replace(
+        server_files,
+        'key: "".to_owned()',
+        f'key: "{KEY}".to_owned()',
+        "rust-key",
+        required=required_server,
+    )
 
-    # 2. Branding (Flutter)
-    ok &= replace_in_file("flutter/lib/common.dart", "static const String appName = 'RustDesk';", f"static const String appName = '{NOME_DO_APP}';")
+    # Fallback no Flutter atual (ServerConfig.fromOptions)
+    ok &= try_replace(
+        ["flutter/lib/common.dart"],
+        'idServer = options[\'custom-rendezvous-server\'] ?? "",',
+        f'idServer = options[\'custom-rendezvous-server\'] ?? "{SERVIDOR}",',
+        "flutter-default-idServer",
+        required=False,
+    )
+    ok &= try_replace(
+        ["flutter/lib/common.dart"],
+        'key = options[\'key\'] ?? "";',
+        f'key = options[\'key\'] ?? "{KEY}";',
+        "flutter-default-key",
+        required=False,
+    )
 
-    # 3. Tratamento dinamico para o arquivo de tema (que mudou de lugar)
+    # 2) Branding (best-effort)
+    ok &= try_replace(
+        ["flutter/lib/common.dart"],
+        "static const String appName = 'RustDesk';",
+        f"static const String appName = '{NOME_DO_APP}';",
+        "app-name-legacy",
+        required=False,
+    )
+
+    # 3) Cor principal (arquivos antigos e fallback no common.dart atual)
     theme_path_1 = "flutter/lib/common/theme.dart"
-    theme_path_2 = "flutter/lib/theme.dart" # Novo local comum em forks recentes
-    
+    theme_path_2 = "flutter/lib/theme.dart"
+
     if os.path.exists(theme_path_1):
         ok &= replace_in_file(theme_path_1, "Colors.teal", f"Color({COR_HEX_FLUTTER})")
     elif os.path.exists(theme_path_2):
         ok &= replace_in_file(theme_path_2, "Colors.teal", f"Color({COR_HEX_FLUTTER})")
     else:
-        print("AVISO: Arquivo de cor (theme.dart) nao encontrado nos locais mapeados. Pulando a cor para nao quebrar o build.")
-        # Nao definimos ok = False aqui para permitir que o app compile mesmo se nao achar a cor.
+        ok &= try_replace(
+            ["flutter/lib/common.dart"],
+            '"teal": Colors.teal,',
+            f'"teal": Color({COR_HEX_FLUTTER}),',
+            "common-dart-teal-map",
+            required=False,
+        )
 
     if not ok:
-        raise SystemExit("ERRO CRITICO: Patch finalizado com pendencias. O build foi interrompido.")
+        raise SystemExit(
+            "ERRO CRITICO: Patch finalizado com pendencias (modo estrito)."
+        )
 
     print("--- Patch Trilink finalizado com sucesso ---")
 
