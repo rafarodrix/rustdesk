@@ -80,10 +80,17 @@ jobs:
           cache: true
 
       - name: Apply Flutter compatibility patch
+        shell: bash
         run: |
-          if ("${{ env.FLUTTER_VERSION }}" -eq "3.24.5") {
-            git apply .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff
-          }
+          if [[ "${{ env.FLUTTER_VERSION }}" == "3.24.5" ]]; then
+            cp .github/patches/flutter_3.24.4_dropdown_menu_enableFilter.diff "$FLUTTER_ROOT/"
+            cd "$FLUTTER_ROOT"
+            if git apply --check flutter_3.24.4_dropdown_menu_enableFilter.diff; then
+              git apply flutter_3.24.4_dropdown_menu_enableFilter.diff
+            else
+              echo "Flutter patch already applied or not applicable; skipping."
+            fi
+          fi
 
       - name: Generate Rust-Flutter Bridge
         run: |

@@ -216,7 +216,44 @@ Semana 5-6:
 - maior tempo medio de resolucao em campo
 - desgaste de confianca por eventos de seguranca/percepcao de inseguranca
 
-## 6) Fontes da comunidade (amostra usada)
+## 6) Implementacoes reais da comunidade em deploy proprio
+
+1. Rebrand + servidor/key embedados no cliente
+- Evidencia: PR #13493
+- O que fizeram: alteraram branding completo, fixaram rendezvous/relay/key e senha padrao no cliente customizado.
+- Valor para nos: padrao de white-label funcional, mas pede governanca para nao hardcodar segredo em codigo.
+
+2. Geracao de cliente custom por pipeline (RDGen)
+- Evidencia: `bryangerlach/rdgen` e `AlekseyLapunov/rdgen-cli`
+- O que fizeram: gerador web/CLI para emitir binarios com app name, icone, servidor e key embutidos, inclusive settings avancados.
+- Valor para nos: industrializa build customizado por perfil/cliente sem manter forks enormes.
+
+3. Deploy do gerador em Docker com CI de build
+- Evidencia: `rdgen/setup.md`
+- O que fizeram: serviço web que dispara GitHub Actions para build, com token fine-grained, segredos, opcao de runner self-hosted e download protegido por zip password.
+- Valor para nos: modelo de "factory de cliente" com rastreabilidade e escala.
+
+4. Assinatura de binario com token USB e API de assinatura
+- Evidencia: `rdgen/setup.md` (sessao de code-signing)
+- O que fizeram: serviço de assinatura separado, acessado por pipeline para assinar executaveis gerados.
+- Valor para nos: cadeia de confianca e menor friccao de antivirus/SmartScreen.
+
+5. Script de instalacao silenciosa com pos-configuracao
+- Evidencia: `AgentEddie99/RustDesk-Install`
+- O que fizeram: script PowerShell/batch para baixar ultima release, instalar silenciosamente, configurar `custom-rendezvous-server`, `key`, instalar serviço e definir senha.
+- Valor para nos: baseline simples e reproduzivel para campo (SMB/helpdesk).
+
+6. Stack self-hosted pronto para producao com landing page
+- Evidencia: `amiirsadeghi/rustdesk-docker-stack`
+- O que fizeram: compose com HBBS/HBBR + Nginx, geracao/persistencia de chave, pagina de onboarding com host/relay/key para usuario final.
+- Valor para nos: reduz erro operacional na configuracao manual e melhora onboarding.
+
+7. Governanca de dominio e distribuicao segura
+- Evidencia: Discussion #9679 e #14167
+- O que fizeram: comunicacao clara de dominio oficial e alerta contra distribuicoes maliciosas.
+- Valor para nos: essencial para deploy proprio, evitando que usuario baixe cliente adulterado.
+
+## 7) Fontes da comunidade (amostra usada)
 
 Issues:
 
