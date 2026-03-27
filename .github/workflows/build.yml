@@ -3,12 +3,6 @@ name: Build Trilink Custom Client
 on:
   workflow_dispatch:
 
-permissions:
-  contents: write
-
-env:
-  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true 
-
 jobs:
   build-windows:
     runs-on: windows-2022
@@ -27,20 +21,25 @@ jobs:
       - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.24.0' # Versao mais estavel para este codigo
+          flutter-version: '3.24.0' # Subindo para a 3.24 com o patch de sintaxe novo
           channel: 'stable'
 
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          target: x86_64-pc-windows-msvc
+
+      - name: Generate Bridge
+        run: |
+          cargo install flutter_rust_bridge_codegen --version 1.80.1
+          # Adiciona o binário ao PATH do Windows para ser reconhecido no próximo passo
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+          # Comando de geração
+          $HOME/.cargo/bin/flutter_rust_bridge_codegen --rust-input libs/hbb_common/src/bridge_generated.rs --dart-output flutter/lib/generated_bridge.dart
+        continue-on-error: true
 
       - name: Build Flutter Windows
         run: |
           cd flutter
           flutter pub get
-          # O RustDesk gera a ponte automaticamente durante o build se o ambiente estiver certo
           flutter build windows --release
 
       - name: Upload Artifact
