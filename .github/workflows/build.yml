@@ -1,4 +1,4 @@
-name: Trilink Enterprise Build
+﻿name: Trilink Enterprise Build
 
 on:
   push:
@@ -18,7 +18,7 @@ on:
 
 concurrency:
   group: trilink-enterprise-build-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 permissions:
   contents: write
@@ -37,22 +37,17 @@ jobs:
       VCPKG_COMMIT_ID: 120deac3062162151622ca4860575a33844ba10b
       FLUTTER_VERSION: 3.24.5
       NSIS_SCRIPT: res/nsis/rustdesk-installer.nsi
-      AGENT_SCRIPT_TEMPLATE: trilink-agente.ps1
-      AGENT_SCRIPT_PATH: dist/trilink-agente.generated.ps1
-      REMOTE_DISCOVERY_TOKEN: ${{ secrets.REMOTE_DISCOVERY_TOKEN }}
-      NSIS_OUTPUT: dist/Trilink-Suporte-Installer.exe
+      AGENT_SCRIPT: trilink-agente.ps1
       PORTAL_METADATA_ENDPOINT: /api/remote/rustdesk/build-metadata
-      PORTAL_API_BASE_URL: ${{ secrets.PORTAL_API_BASE_URL }}
-      PORTAL_API_TOKEN: ${{ secrets.PORTAL_API_TOKEN }}
       BUILD_VERSION: ""
       RELEASE_ZIP: ""
       SINGLE_EXE: ""
+      NSIS_OUTPUT: ""
       DIAG_FILE: ""
       CHECKSUM_FILE: ""
       NSIS_BUILT: "false"
 
     steps:
-      # [OTIMIZAÇÃO] Validação movida para o topo (Fail-fast)
       - name: Validate manual release tag
         if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true'
         run: |
@@ -150,8 +145,7 @@ jobs:
           }
 
       - name: Build Final (RustDesk Windows Upstream Mode)
-        run: |
-          python .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
+        run: python .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
 
       - name: Prepare folder for single-exe packing
         run: |
@@ -169,44 +163,50 @@ jobs:
           mkdir -p ./SignOutput
           mv ./target/release/rustdesk-portable-packer.exe "${{ env.SINGLE_EXE }}"
 
-      - name: Prepare Agent Script (from Secret)
-        run: |
-          New-Item -ItemType Directory -Force -Path dist | Out-Null
-          if (-not (Test-Path "$env:AGENT_SCRIPT_TEMPLATE")) {
-            throw "Template do agente nao encontrado: $env:AGENT_SCRIPT_TEMPLATE"
-          }
-
-          $content = Get-Content -Raw -Path "$env:AGENT_SCRIPT_TEMPLATE"
-          if ([string]::IsNullOrWhiteSpace("$env:REMOTE_DISCOVERY_TOKEN")) {
-            Write-Host "Aviso: REMOTE_DISCOVERY_TOKEN nao definido no GitHub Secrets. O agente sera gerado com placeholder."
-          } else {
-            $content = $content.Replace("__SET_ME_DISCOVERY_TOKEN__", "$env:REMOTE_DISCOVERY_TOKEN")
-          }
-
-          $content | Set-Content -Path "$env:AGENT_SCRIPT_PATH" -Encoding utf8
-          Write-Host "Agente preparado em: $env:AGENT_SCRIPT_PATH"
-
       - name: Install NSIS
         run: |
           choco install nsis -y --no-progress
           makensis /VERSION
 
       - name: Build NSIS Installer
+        env:
+          DISCOVERY_TOKEN: ${{ secrets.REMOTE_DISCOVERY_TOKEN }}
+          PORTAL_BASE_URL: ${{ secrets.PORTAL_API_BASE_URL }}
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
+
           if (-not (Test-Path "$env:NSIS_SCRIPT")) {
             throw "Script NSIS nao encontrado: $env:NSIS_SCRIPT"
           }
-          if (-not (Test-Path "$env:AGENT_SCRIPT_PATH")) {
-            throw "Script do agente gerado nao encontrado: $env:AGENT_SCRIPT_PATH"
+          if (-not (Test-Path "$env:AGENT_SCRIPT")) {
+            throw "Script do agente nao encontrado: $env:AGENT_SCRIPT"
           }
+          if ([string]::IsNullOrWhiteSpace($env:DISCOVERY_TOKEN)) {
+            throw "REMOTE_DISCOVERY_TOKEN nao configurado nos GitHub Secrets."
+          }
+          if ([string]::IsNullOrWhiteSpace($env:PORTAL_BASE_URL)) {
+            throw "PORTAL_API_BASE_URL nao configurado nos GitHub Secrets."
+          }
+
+          $appSourceDir = (Resolve-Path "$env:OUTPUT_DIR").Path -replace '/', '\\'
+          $agentScriptAbs = (Resolve-Path "$env:AGENT_SCRIPT").Path -replace '/', '\\'
+          $nsisOutputAbs = (Join-Path $pwd "$env:NSIS_OUTPUT") -replace '/', '\\'
+          $portalBaseUrl = "$env:PORTAL_BASE_URL".TrimEnd('/')
+
+          Write-Host "NSIS APP_SOURCE_DIR=$appSourceDir"
+          Write-Host "NSIS AGENT_SCRIPT=$agentScriptAbs"
+          Write-Host "NSIS OUTFILE=$nsisOutputAbs"
+
           makensis `
             /DAPP_NAME="Trilink Suporte Remoto" `
             /DAPP_EXE="rustdesk.exe" `
-            /DAPP_SOURCE_DIR="$pwd\\$env:OUTPUT_DIR" `
-            /DAGENT_SCRIPT="$pwd\\$env:AGENT_SCRIPT_PATH" `
-            /DOUTFILE="$pwd\\$env:NSIS_OUTPUT" `
+            /DAPP_SOURCE_DIR="$appSourceDir" `
+            /DAGENT_SCRIPT="$agentScriptAbs" `
+            /DDISCOVERY_TOKEN="$env:DISCOVERY_TOKEN" `
+            /DPORTAL_BASE_URL="$portalBaseUrl" `
+            /DOUTFILE="$nsisOutputAbs" `
             "$env:NSIS_SCRIPT"
+
           if (Test-Path "$env:NSIS_OUTPUT") {
             "NSIS_BUILT=true" | Out-File -FilePath $env:GITHUB_ENV -Append
             Write-Host "NSIS installer gerado em $env:NSIS_OUTPUT"
@@ -218,20 +218,18 @@ jobs:
       - name: Pack output
         run: |
           if (-Not (Test-Path "$env:OUTPUT_DIR")) {
-            Write-Host "Output nao encontrado em $env:OUTPUT_DIR"
-            if (Test-Path "flutter/build/windows/x64/CMakeFiles/CMakeError.log") {
-              Write-Host "===== CMakeError.log ====="
-              Get-Content "flutter/build/windows/x64/CMakeFiles/CMakeError.log"
-            }
-            if (Test-Path "flutter/build/windows/x64/CMakeFiles/CMakeOutput.log") {
-              Write-Host "===== CMakeOutput.log ====="
-              Get-Content "flutter/build/windows/x64/CMakeFiles/CMakeOutput.log"
+            foreach ($log in @(
+              "flutter/build/windows/x64/CMakeFiles/CMakeError.log",
+              "flutter/build/windows/x64/CMakeFiles/CMakeOutput.log"
+            )) {
+              if (Test-Path $log) { Write-Host "===== $log ====="; Get-Content $log }
             }
             throw "Build final nao gerou pasta Release."
           }
           Compress-Archive -Path "$env:OUTPUT_DIR\*" -DestinationPath "$env:RELEASE_ZIP" -Force
 
       - name: Generate Diagnostics and Checksums
+        if: always()
         run: |
           $hashes = @()
           $files = @("$env:RELEASE_ZIP", "$env:SINGLE_EXE")
@@ -266,19 +264,11 @@ jobs:
           path: ${{ env.RELEASE_ZIP }}
           if-no-files-found: error
 
-      - name: Upload Primary Package (Installer)
-        if: env.NSIS_BUILT == 'true'
-        uses: actions/upload-artifact@v4
-        with:
-          name: Trilink-Suporte-PRIMARY-${{ env.BUILD_VERSION }}
-          path: ${{ env.NSIS_OUTPUT }}
-          if-no-files-found: error
-
       - name: Upload NSIS Installer
         if: env.NSIS_BUILT == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Trilink-Suporte-Installer-NSIS-${{ env.BUILD_VERSION }}
+          name: Trilink-Suporte-Installer-${{ env.BUILD_VERSION }}
           path: ${{ env.NSIS_OUTPUT }}
           if-no-files-found: error
 
@@ -290,31 +280,35 @@ jobs:
           if-no-files-found: error
 
       - name: Upload Build Diagnostics
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: Trilink-Suporte-Diagnostics-${{ env.BUILD_VERSION }}
           path: |
             ${{ env.DIAG_FILE }}
             ${{ env.CHECKSUM_FILE }}
-          if-no-files-found: error
+          if-no-files-found: warn
 
       - name: Publish Build Metadata to Portal
-        if: env.PORTAL_API_BASE_URL != '' && env.PORTAL_API_TOKEN != ''
+        if: env.NSIS_BUILT == 'true'
+        env:
+          PORTAL_API_BASE_URL: ${{ secrets.PORTAL_API_BASE_URL }}
+          PORTAL_API_TOKEN: ${{ secrets.PORTAL_API_TOKEN }}
         run: |
-          $baseUrl = "$env:PORTAL_API_BASE_URL".TrimEnd("/")
-          $endpoint = "$env:PORTAL_METADATA_ENDPOINT"
-          $url = "$baseUrl$endpoint"
+          if ([string]::IsNullOrWhiteSpace($env:PORTAL_API_BASE_URL) -or [string]::IsNullOrWhiteSpace($env:PORTAL_API_TOKEN)) {
+            Write-Host "PORTAL_API_BASE_URL ou PORTAL_API_TOKEN nao configurados. Pulando."
+            exit 0
+          }
 
+          $baseUrl = "$env:PORTAL_API_BASE_URL".TrimEnd("/")
+          $url = "$baseUrl$env:PORTAL_METADATA_ENDPOINT"
           $diag = Get-Content -Raw -Path "$env:DIAG_FILE" | ConvertFrom-Json
+
           $checksums = @()
           if (Test-Path "$env:CHECKSUM_FILE") {
-            $lines = Get-Content -Path "$env:CHECKSUM_FILE"
-            foreach ($line in $lines) {
+            foreach ($line in (Get-Content "$env:CHECKSUM_FILE")) {
               if ($line -match '^([A-Fa-f0-9]+)\s+\*(.+)$') {
-                $checksums += [ordered]@{
-                  sha256 = $matches[1]
-                  file = $matches[2]
-                }
+                $checksums += [ordered]@{ sha256 = $matches[1]; file = $matches[2] }
               }
             }
           }
@@ -338,41 +332,35 @@ jobs:
             generatedAtUtc = $diag.generatedAtUtc
           }
 
-          $json = $payload | ConvertTo-Json -Depth 10
-          Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json" -Headers @{
-            Authorization = "Bearer $env:PORTAL_API_TOKEN"
-          } -Body $json
-          Write-Host "Build metadata enviado para: $url"
+          Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json" -Headers @{ Authorization = "Bearer $env:PORTAL_API_TOKEN" } -Body ($payload | ConvertTo-Json -Depth 10)
+          Write-Host "Build metadata publicado em: $url"
 
       - name: Deployment Summary
+        if: always()
         run: |
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "## Trilink Enterprise Build Summary"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value ""
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Build version: **$env:BUILD_VERSION**"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Git SHA: ${{ github.sha }}"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Release zip: $env:RELEASE_ZIP"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Single EXE: $env:SINGLE_EXE"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- NSIS output: $env:NSIS_OUTPUT (built=$env:NSIS_BUILT)"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Checksums file: $env:CHECKSUM_FILE"
-          Add-Content -Path $env:GITHUB_STEP_SUMMARY -Value "- Portal metadata publish enabled: $([bool]($env:PORTAL_API_BASE_URL -and $env:PORTAL_API_TOKEN))"
+          $nsisStatus = if ($env:NSIS_BUILT -eq "true") { "gerado" } else { "NAO gerado" }
+          Add-Content $env:GITHUB_STEP_SUMMARY "## Trilink Enterprise Build"
+          Add-Content $env:GITHUB_STEP_SUMMARY ""
+          Add-Content $env:GITHUB_STEP_SUMMARY "| Campo | Valor |"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| ----- | ----- |"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| Build version | **$env:BUILD_VERSION** |"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| Git SHA | ``${{ github.sha }}`` |"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| Release ZIP | ``$env:RELEASE_ZIP`` |"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| Single EXE | ``$env:SINGLE_EXE`` |"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| NSIS installer | ``$env:NSIS_OUTPUT`` ($nsisStatus) |"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| Checksums | ``$env:CHECKSUM_FILE`` |"
 
       - name: Publish GitHub Release
         if: github.ref_type == 'tag' || github.event.inputs.publish_release == 'true'
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.release_tag }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
           files: |
             ${{ env.RELEASE_ZIP }}
             ${{ env.SINGLE_EXE }}
             ${{ env.CHECKSUM_FILE }}
             ${{ env.DIAG_FILE }}
-          generate_release_notes: true
-          draft: false
-          prerelease: false
-
-      - name: Publish GitHub Release (NSIS Installer)
-        if: (github.ref_type == 'tag' || github.event.inputs.publish_release == 'true') && env.NSIS_BUILT == 'true'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.release_tag }}
-          files: ${{ env.NSIS_OUTPUT }}
+            ${{ env.NSIS_BUILT == 'true' && env.NSIS_OUTPUT || '' }}

@@ -5,6 +5,8 @@
 ;   /DAPP_SOURCE_DIR
 ;   /DOUTFILE
 ;   /DAGENT_SCRIPT (optional, defaults to trilink-agente.ps1 in repo root)
+;   /DDISCOVERY_TOKEN
+;   /DPORTAL_BASE_URL
 
 !ifndef APP_NAME
   !define APP_NAME "Trilink Suporte Remoto"
@@ -24,6 +26,14 @@
 
 !ifndef AGENT_SCRIPT
   !define AGENT_SCRIPT "trilink-agente.ps1"
+!endif
+
+!ifndef DISCOVERY_TOKEN
+  !define DISCOVERY_TOKEN ""
+!endif
+
+!ifndef PORTAL_BASE_URL
+  !define PORTAL_BASE_URL ""
 !endif
 
 Unicode true
@@ -52,6 +62,10 @@ InstallDirRegKey HKLM "Software\${APP_NAME}" "InstallDir"
 
 Section "Install"
   SetRegView 64
+  StrCmp "${DISCOVERY_TOKEN}" "" 0 +2
+  Abort "DISCOVERY_TOKEN nao informado. Recompile o instalador com /DDISCOVERY_TOKEN."
+  StrCmp "${PORTAL_BASE_URL}" "" 0 +2
+  Abort "PORTAL_BASE_URL nao informado. Recompile o instalador com /DPORTAL_BASE_URL."
   SetOutPath "$INSTDIR"
 
   ; Copy full runtime folder (exe + dlls + data)
@@ -60,6 +74,8 @@ Section "Install"
 
   ; Registry + uninstaller
   WriteRegStr HKLM "Software\${APP_NAME}" "InstallDir" "$INSTDIR"
+  WriteRegStr HKLM "Software\Trilink\RemoteAgent" "DiscoveryToken" "${DISCOVERY_TOKEN}"
+  WriteRegStr HKLM "Software\Trilink\RemoteAgent" "PortalBaseUrl" "${PORTAL_BASE_URL}"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   ; Start menu and desktop shortcuts
@@ -86,4 +102,5 @@ Section "Uninstall"
 
   RMDir /r "$INSTDIR"
   DeleteRegKey HKLM "Software\${APP_NAME}"
+  DeleteRegKey HKLM "Software\Trilink\RemoteAgent"
 SectionEnd

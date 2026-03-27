@@ -2,12 +2,12 @@
 
 Set-StrictMode -Version Latest
 
-$PortalBaseUrl = "https://ajuda.trilinksoftware.com.br"
-$DiscoveryToken = "__SET_ME_DISCOVERY_TOKEN__"
 $AgentVersion = "trilink-agent-v1"
+$RegPath = "HKLM:\SOFTWARE\Trilink\RemoteAgent"
 
 $StateDir = Join-Path $env:ProgramData "Trilink\RemoteAgent"
 $LogFile = Join-Path $StateDir "agent.log"
+$StateFile = Join-Path $StateDir "agent-state.json"
 
 function Ensure-StateDir {
     if (-not (Test-Path $StateDir)) {
@@ -33,8 +33,23 @@ function Get-RustDeskId {
     if (-not (Test-Path $exe)) {
         throw "rustdesk.exe nao encontrado: $exe"
     }
-    $id = (& $exe --get-id 2>$null | Out-String).Trim()
-    return ($id -replace "\s+", "")
+
+    $maxAttempts = 8
+    $waitSeconds = 2
+    for ($attempt = 1; $attempt -le $maxAttempts; $attempt++) {
+        $id = (& $exe --get-id 2>$null | Out-String).Trim()
+        $id = ($id -replace "\s+", "")
+        if (-not [string]::IsNullOrWhiteSpace($id)) {
+            return $id
+        }
+
+        if ($attempt -lt $maxAttempts) {
+            Write-Log "RustDesk ID ainda indisponivel (tentativa $attempt/$maxAttempts). Aguardando ${waitSeconds}s."
+            Start-Sleep -Seconds $waitSeconds
+        }
+    }
+
+    throw "RustDesk ID nao disponivel apos $maxAttempts tentativas."
 }
 
 function Get-ServiceStatus {
@@ -42,6 +57,80 @@ function Get-ServiceStatus {
     if ($null -eq $svc) { return "not_found" }
     if ($svc.Status -eq "Running") { return "running" }
     return "stopped"
+}
+
+function Get-DiscoveryToken {
+    try {
+        $val = (Get-ItemProperty -Path $RegPath -Name "DiscoveryToken" -ErrorAction Stop).DiscoveryToken
+        if (-not [string]::IsNullOrWhiteSpace($val)) { return [string]$val }
+    } catch {}
+    return $null
+}
+
+function Get-PortalBaseUrl {
+    try {
+        $val = (Get-ItemProperty -Path $RegPath -Name "PortalBaseUrl" -ErrorAction Stop).PortalBaseUrl
+        if (-not [string]::IsNullOrWhiteSpace($val)) { return ([string]$val).TrimEnd('/') }
+    } catch {}
+    return $null
+}
+
+function Load-AgentState {
+    Ensure-StateDir
+    if (-not (Test-Path $StateFile)) {
+        return @{
+            lastSysproHash = ""
+            lastFullSnapshotDate = ""
+        }
+    }
+
+    try {
+        $raw = Get-Content -Raw -Path $StateFile
+        $obj = $raw | ConvertFrom-Json
+        return @{
+            lastSysproHash = [string]$obj.lastSysproHash
+            lastFullSnapshotDate = [string]$obj.lastFullSnapshotDate
+        }
+    } catch {
+        Write-Log "Falha ao ler estado local. Estado sera reiniciado."
+        return @{
+            lastSysproHash = ""
+            lastFullSnapshotDate = ""
+        }
+    }
+}
+
+function Save-AgentState {
+    param(
+        [string]$LastSysproHash,
+        [string]$LastFullSnapshotDate
+    )
+
+    Ensure-StateDir
+    $state = [ordered]@{
+        lastSysproHash = $LastSysproHash
+        lastFullSnapshotDate = $LastFullSnapshotDate
+        updatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
+    }
+    $state | ConvertTo-Json -Depth 5 | Set-Content -Path $StateFile -Encoding utf8
+}
+
+function Get-SysproUpdates {
+    # Placeholder: manter vazio ate integrar varredura real do inventario local.
+    return @()
+}
+
+function Get-Sha256Hex {
+    param([string]$InputText)
+
+    $sha = [System.Security.Cryptography.SHA256]::Create()
+    try {
+        $bytes = [System.Text.Encoding]::UTF8.GetBytes($InputText)
+        $hashBytes = $sha.ComputeHash($bytes)
+        return ([System.BitConverter]::ToString($hashBytes)).Replace("-", "").ToLowerInvariant()
+    } finally {
+        $sha.Dispose()
+    }
 }
 
 function Get-HttpStatusCodeFromException {
@@ -126,14 +215,41 @@ try {
 } catch {}
 
 try {
+    $PortalBaseUrl = Get-PortalBaseUrl
+    if ([string]::IsNullOrWhiteSpace($PortalBaseUrl)) {
+        Write-Log "PortalBaseUrl ausente no Registry ($RegPath). Execute o instalador novamente."
+        exit 1
+    }
+
+    $DiscoveryToken = Get-DiscoveryToken
+    if ([string]::IsNullOrWhiteSpace($DiscoveryToken)) {
+        Write-Log "DiscoveryToken ausente no Registry ($RegPath). Execute o instalador novamente."
+        exit 1
+    }
+
     $rustdeskId = Get-RustDeskId
     if ([string]::IsNullOrWhiteSpace($rustdeskId)) {
         throw "RustDesk ID vazio."
     }
 
-    if ([string]::IsNullOrWhiteSpace($DiscoveryToken) -or $DiscoveryToken -eq "__SET_ME_DISCOVERY_TOKEN__") {
-        Write-Log "Discovery token nao configurado. Ajuste trilink-agente.ps1."
-        exit 0
+
+    $sysproUpdatesFull = @(Get-SysproUpdates)
+    $sysproJson = $sysproUpdatesFull | ConvertTo-Json -Depth 10 -Compress
+    $sysproHash = Get-Sha256Hex -InputText $sysproJson
+    $state = Load-AgentState
+    $todayUtc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd")
+
+    $sendFullSnapshot = $false
+    if ([string]::IsNullOrWhiteSpace($state.lastSysproHash)) { $sendFullSnapshot = $true }
+    if ($state.lastSysproHash -ne $sysproHash) { $sendFullSnapshot = $true }
+    if ($state.lastFullSnapshotDate -ne $todayUtc) { $sendFullSnapshot = $true }
+
+    $sysproUpdatesToSend = @()
+    if ($sendFullSnapshot) {
+        $sysproUpdatesToSend = $sysproUpdatesFull
+        Write-Log "sysproUpdates: enviando snapshot completo (hash mudou/estado novo/rotacao diaria)."
+    } else {
+        Write-Log "sysproUpdates: sem mudanca, enviando array vazio."
     }
 
     $payload = @{
@@ -142,12 +258,17 @@ try {
         machineName = $env:COMPUTERNAME
         agentVersion = $AgentVersion
         serviceStatus = (Get-ServiceStatus)
-        sysproUpdates = @()
+        sysproUpdates = $sysproUpdatesToSend
     }
 
-    $url = "$($PortalBaseUrl.TrimEnd('/'))/api/remote/agents/discover"
+    $url = "$PortalBaseUrl/api/remote/agents/discover"
     $ok = Post-JsonWithRetry -Url $url -Payload $payload
     if ($ok) {
+        if ($sendFullSnapshot) {
+            Save-AgentState -LastSysproHash $sysproHash -LastFullSnapshotDate $todayUtc
+        } else {
+            Save-AgentState -LastSysproHash $state.lastSysproHash -LastFullSnapshotDate $state.lastFullSnapshotDate
+        }
         Write-Log "Discover enviado com sucesso para $url | rustdeskId=$rustdeskId"
     } else {
         Write-Log "Discover falhou apos retries | rustdeskId=$rustdeskId"
