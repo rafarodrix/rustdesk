@@ -1,7 +1,23 @@
 name: Trilink Enterprise Build
 
 on:
+  push:
+    tags:
+      - "v*"
   workflow_dispatch:
+    inputs:
+      publish_release:
+        description: "Publicar release no GitHub"
+        required: false
+        type: boolean
+        default: false
+      release_tag:
+        description: "Tag de release para workflow manual (ex: v2026.03.1)"
+        required: false
+        type: string
+
+permissions:
+  contents: write
 
 jobs:
   build-windows:
@@ -9,8 +25,20 @@ jobs:
     defaults:
       run:
         shell: pwsh
-    
+
+    env:
+      ARTIFACT_NAME: Trilink-Suporte-Windows
+      OUTPUT_DIR: flutter/build/windows/runner/Release
+
     steps:
+      # [OTIMIZAÇÃO] Validação movida para o topo (Fail-fast)
+      - name: Validate manual release tag
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.publish_release == 'true'
+        run: |
+          if (-not "${{ github.event.inputs.release_tag }}") {
+            throw "ERRO: release_tag e obrigatoria quando publish_release=true no workflow_dispatch."
+          }
+
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
@@ -19,35 +47,34 @@ jobs:
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.x'
+          python-version: "3.12"
 
       - name: Run Trilink Patch
         run: python patch_client.py
 
-      - name: Setup LLVM/Clang (O Motor do Bindgen)
+      - name: Setup LLVM/Clang
         run: |
-          # Aproveita o LLVM 20+ nativo do Github Actions
           echo "LIBCLANG_PATH=C:\Program Files\LLVM\bin" | Out-File -FilePath $env:GITHUB_ENV -Append
           clang --version
 
-      - name: Setup VCPKG e Codecs de Vídeo (Motor C++)
+      # [CORREÇÃO CRÍTICA] Comando ajustado para o Modo Manifest do VCPKG
+      - name: Setup VCPKG and Video Codecs
         run: |
           git clone https://github.com/microsoft/vcpkg $env:USERPROFILE\vcpkg
           & $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat
           echo "VCPKG_ROOT=$env:USERPROFILE\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
-          $pkgs = @('libvpx:x64-windows-static','libyuv:x64-windows-static','opus:x64-windows-static','aom:x64-windows-static')
-          & $env:USERPROFILE\vcpkg\vcpkg.exe install $pkgs
+          & $env:USERPROFILE\vcpkg\vcpkg.exe install --triplet x64-windows-static
 
       - name: Setup Rust (Stable)
         uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-pc-windows-msvc
 
-      - name: Setup Flutter
+      - name: Setup Flutter (Stable)
         uses: subosito/flutter-action@v2
         with:
-          channel: 'stable'
-          flutter-version: '3.19.0' 
+          channel: stable
+          cache: true
 
       - name: Generate Rust-Flutter Bridge
         run: |
@@ -61,8 +88,26 @@ jobs:
           flutter pub get
           flutter build windows --release
 
-      - name: Upload Artifact Trilink
+      - name: Pack output
+        run: |
+          if (-Not (Test-Path "$env:OUTPUT_DIR")) { throw "Output de build nao encontrado: $env:OUTPUT_DIR" }
+          $version = if ("${{ github.ref_type }}" -eq "tag") { "${{ github.ref_name }}" } elseif ("${{ github.event.inputs.release_tag }}") { "${{ github.event.inputs.release_tag }}" } else { "manual-${{ github.run_number }}" }
+          $zip = "$env:ARTIFACT_NAME-$version.zip"
+          Compress-Archive -Path "$env:OUTPUT_DIR\*" -DestinationPath $zip -Force
+          "RELEASE_ZIP=$zip" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Upload Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Trilink-Suporte-Windows
-          path: flutter/build/windows/runner/Release/
+          name: ${{ env.ARTIFACT_NAME }}
+          path: ${{ env.RELEASE_ZIP }}
+
+      - name: Publish GitHub Release
+        if: github.ref_type == 'tag' || github.event.inputs.publish_release == 'true'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_type == 'tag' && github.ref_name || github.event.inputs.release_tag }}
+          files: ${{ env.RELEASE_ZIP }}
+          generate_release_notes: true
+          draft: false
+          prerelease: false
