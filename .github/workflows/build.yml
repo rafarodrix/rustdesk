@@ -65,7 +65,15 @@ jobs:
           git -C $env:USERPROFILE\vcpkg checkout $env:VCPKG_COMMIT_ID
           & $env:USERPROFILE\vcpkg\bootstrap-vcpkg.bat -disableMetrics
           echo "VCPKG_ROOT=$env:USERPROFILE\vcpkg" | Out-File -FilePath $env:GITHUB_ENV -Append
-          & $env:USERPROFILE\vcpkg\vcpkg.exe install --triplet x64-windows-static --x-install-root="$env:USERPROFILE\vcpkg\installed"
+          $env:VCPKG_DEFAULT_HOST_TRIPLET = "x64-windows-static"
+          & $env:USERPROFILE\vcpkg\vcpkg.exe install --triplet x64-windows-static --x-install-root="$env:USERPROFILE\vcpkg\installed" --x-manifest-root="$pwd"
+          if (-Not (Test-Path "$env:USERPROFILE\vcpkg\installed\x64-windows-static\include\libavcodec\avcodec.h")) {
+            Write-Host "ERRO: header FFmpeg nao encontrado no triplet x64-windows-static."
+            if (Test-Path "$env:USERPROFILE\vcpkg\installed\x64-windows\include\libavcodec\avcodec.h") {
+              Write-Host "Header encontrado em x64-windows (triplet divergente)."
+            }
+            throw "Dependencias FFmpeg incompletas para hwcodec."
+          }
 
       - name: Setup Rust (Stable)
         uses: dtolnay/rust-toolchain@stable
