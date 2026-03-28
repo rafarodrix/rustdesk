@@ -75,24 +75,57 @@ jobs:
             "res/rustdesk.ico",
             "flutter/windows/runner/resources/app_icon.ico"
           )
+          $iconReady = $false
 
-          Write-Host "Baixando icone customizado..."
-          Invoke-WebRequest -Uri "$env:CUSTOM_ICON_URL" -OutFile $tmpIcon -ErrorAction Stop
+          try {
+            Write-Host "Baixando icone customizado..."
+            Invoke-WebRequest -Uri "$env:CUSTOM_ICON_URL" -OutFile $tmpIcon -ErrorAction Stop
 
-          if (-not (Test-Path $tmpIcon)) {
-            throw "Falha ao baixar o arquivo de icone em $tmpIcon"
-          }
-
-          foreach ($target in $iconTargets) {
-            if (Test-Path $target) {
-              Copy-Item -Path $tmpIcon -Destination $target -Force
-              Write-Host "Icone aplicado em $target"
-            } else {
-              Write-Warning "Caminho de icone nao encontrado: $target"
+            if (-not (Test-Path $tmpIcon)) {
+              throw "Falha ao baixar o arquivo de icone em $tmpIcon"
             }
+
+            # Valida formato ICO (cabecalho 00 00 01 00) para evitar RC2175 no runner RC.
+            $header = [System.IO.File]::ReadAllBytes($tmpIcon)[0..3]
+            if ($null -eq $header -or $header.Length -lt 4) {
+              throw "Arquivo de icone invalido: conteudo vazio/incompleto em $tmpIcon"
+            }
+            if ($header[0] -ne 0 -or $header[1] -ne 0 -or $header[2] -ne 1 -or $header[3] -ne 0) {
+              $hex = ($header | ForEach-Object { $_.ToString("X2") }) -join " "
+              throw "CUSTOM_ICON_URL nao retornou ICO valido (cabecalho: $hex). Use URL RAW direta para .ico."
+            }
+
+            # Bloqueia respostas HTML/texto salvas com extensao .ico (URL errada, auth, redirect, etc).
+            $sample = [System.IO.File]::ReadAllBytes($tmpIcon)[0..31]
+            $ascii = -join ($sample | ForEach-Object {
+              if ($_ -ge 32 -and $_ -le 126) { [char]$_ } else { "." }
+            })
+            if ($ascii -match "<!DOCTYPE|<html|<?xml|AccessDenied|Not Found") {
+              throw "CUSTOM_ICON_URL parece retornar HTML/texto e nao um .ico binario. Verifique o link RAW."
+            }
+
+            $iconReady = $true
+          } catch {
+            Write-Warning "Falha ao aplicar icone customizado: $($_.Exception.Message)"
+            Write-Warning "Continuando com os icones padrao para nao bloquear o deploy."
           }
 
-          Remove-Item -Path $tmpIcon -Force
+          if ($iconReady) {
+            foreach ($target in $iconTargets) {
+              if (Test-Path $target) {
+                Copy-Item -Path $tmpIcon -Destination $target -Force
+                Write-Host "Icone aplicado em $target"
+              } else {
+                Write-Warning "Caminho de icone nao encontrado: $target"
+              }
+            }
+          } else {
+            Write-Host "Fallback ativo: mantendo icones padrao do repositorio."
+          }
+
+          if (Test-Path $tmpIcon) {
+            Remove-Item -Path $tmpIcon -Force
+          }
       - name: Set Build Metadata
         run: |
           $version = if ("${{ github.ref_type }}" -eq "tag") {
