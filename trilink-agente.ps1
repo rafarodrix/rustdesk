@@ -7,8 +7,12 @@ $RegPath = "HKLM:\SOFTWARE\Trilink\RemoteAgent"
 $StateDir = Join-Path $env:ProgramData "Trilink\RemoteAgent"
 $LogsDir = "C:\Trilink\Remote\Logs"
 $LogFile = Join-Path $LogsDir "agentRemote.log"
+$DebugLogFile = Join-Path $LogsDir "comodebug.log"
 $StateFile = Join-Path $StateDir "agent-state.json"
 $script:RegistryReadTrace = @{}
+$script:InstallTokenReadSource = "not_checked"
+$script:RunMutex = $null
+$script:HasRunMutex = $false
 
 function Ensure-StateDir {
     if (-not (Test-Path $StateDir)) {
@@ -24,6 +28,53 @@ function Write-Log {
     Ensure-StateDir
     $line = "$(Get-Date -Format o) | $Message"
     Add-Content -Path $LogFile -Value $line
+    Add-Content -Path $DebugLogFile -Value $line
+}
+
+function Acquire-RunLock {
+    param(
+        [string]$MutexName = "Global\TrilinkRemoteAgentMutex",
+        [int]$TimeoutMilliseconds = 1500
+    )
+
+    try {
+        $createdNew = $false
+        $script:RunMutex = New-Object System.Threading.Mutex($false, $MutexName, [ref]$createdNew)
+        try {
+            $acquired = $script:RunMutex.WaitOne($TimeoutMilliseconds, $false)
+            if ($acquired) {
+                $script:HasRunMutex = $true
+                return $true
+            }
+            return $false
+        } catch [System.Threading.AbandonedMutexException] {
+            $script:HasRunMutex = $true
+            Write-Log "run lock abandonado detectado (mutex=$MutexName). Execucao atual assumiu o lock."
+            return $true
+        }
+    } catch {
+        Write-Log "Falha ao adquirir run lock: $($_.Exception.Message)"
+        return $false
+    }
+}
+
+function Release-RunLock {
+    if ($script:HasRunMutex -and $null -ne $script:RunMutex) {
+        try {
+            $script:RunMutex.ReleaseMutex()
+        } catch {
+            # ignore release errors
+        }
+    }
+    if ($null -ne $script:RunMutex) {
+        try {
+            $script:RunMutex.Dispose()
+        } catch {
+            # ignore dispose errors
+        }
+    }
+    $script:RunMutex = $null
+    $script:HasRunMutex = $false
 }
 
 function Mask-Secret {
@@ -227,9 +278,38 @@ function Get-DiscoveryToken {
 }
 
 function Get-InstallToken {
+    $script:InstallTokenReadSource = "not_found"
+
     $val = Get-RegistryStringValue -SubKeyPath "SOFTWARE\Trilink\RemoteAgent" -ValueName "InstallToken"
-    if (-not [string]::IsNullOrWhiteSpace($val)) { return [string]$val }
+    if (-not [string]::IsNullOrWhiteSpace($val)) {
+        $script:InstallTokenReadSource = "registry_$((Get-RegistryReadSource -SubKeyPath 'SOFTWARE\Trilink\RemoteAgent' -ValueName 'InstallToken').ToLowerInvariant())"
+        return [string]$val
+    }
+
+    $fallbackFiles = @(
+        (Join-Path $PSScriptRoot "install-token.txt"),
+        "C:\Trilink\Remote\RustDesk\install-token.txt"
+    ) | Select-Object -Unique
+
+    foreach ($tokenFile in $fallbackFiles) {
+        try {
+            if (-not (Test-Path $tokenFile)) { continue }
+            $raw = Get-Content -Path $tokenFile -Raw -ErrorAction Stop
+            $fileToken = ([string]$raw).Trim()
+            if (-not [string]::IsNullOrWhiteSpace($fileToken)) {
+                $script:InstallTokenReadSource = "file:$tokenFile"
+                return $fileToken
+            }
+        } catch {
+            continue
+        }
+    }
+
     return $null
+}
+
+function Get-InstallTokenReadSource {
+    return [string]$script:InstallTokenReadSource
 }
 
 function New-DefaultState {
@@ -372,7 +452,7 @@ function Get-HttpStatusCodeFromException {
 function ConvertFrom-JsonSafe {
     param([string]$Text)
     if ([string]::IsNullOrWhiteSpace($Text)) { return $null }
-    try { return $Text | ConvertFrom-Json -Depth 30 } catch { return $null }
+    try { return $Text | ConvertFrom-Json } catch { return $null }
 }
 
 function Get-ObjectPropertyValue {
@@ -447,6 +527,11 @@ function Post-JsonWithRetry {
     $json = $Payload | ConvertTo-Json -Depth 20
     $jsonBytes = [System.Text.Encoding]::UTF8.GetByteCount($json)
     $backoffSeconds = @(0, 3, 10, 25)
+    $headers = @{
+        "Accept" = "application/json"
+        "Accept-Encoding" = "gzip, deflate"
+        "Cache-Control" = "no-cache"
+    }
     Write-Log "http request op=$Operation url=$Url payloadBytes=$jsonBytes maxAttempts=$MaxAttempts"
 
     for ($attempt = 1; $attempt -le $MaxAttempts; $attempt++) {
@@ -454,7 +539,8 @@ function Post-JsonWithRetry {
             $response = Invoke-WebRequest `
                 -Method Post `
                 -Uri $Url `
-                -ContentType "application/json" `
+                -Headers $headers `
+                -ContentType "application/json; charset=utf-8" `
                 -Body $json `
                 -TimeoutSec 25 `
                 -UseBasicParsing
@@ -466,6 +552,26 @@ function Post-JsonWithRetry {
             Write-Log "http response op=$Operation status=$statusCode attempt=$attempt/$MaxAttempts bodyKeys=$bodyKeys"
 
             if ($statusClass -eq 2) {
+                if ($null -eq $body) {
+                    $raw = [string]$response.Content
+                    $preview = if ($raw.Length -gt 220) { $raw.Substring(0, 220) } else { $raw }
+                    $preview = $preview -replace "(\r|\n)+", " "
+                    $contentType = [string]$response.Headers["Content-Type"]
+                    Write-Log "http response op=$Operation body_parse_failed contentType=$contentType preview=$preview"
+                    if ($attempt -lt $MaxAttempts) {
+                        $sleep = 2
+                        Write-Log "http retry op=$Operation reason=body_parse_failed delay=${sleep}s"
+                        Start-Sleep -Seconds $sleep
+                        continue
+                    }
+                    return [ordered]@{
+                        ok = $false
+                        statusCode = $statusCode
+                        body = $null
+                        error = "BODY_PARSE_FAILED"
+                        attempts = $attempt
+                    }
+                }
                 return [ordered]@{
                     ok = $true
                     statusCode = $statusCode
@@ -614,6 +720,12 @@ $state = New-DefaultState
 try {
     $cycleId = ([Guid]::NewGuid().ToString("N")).Substring(0, 10)
     Write-Log "cycle start id=$cycleId computer=$env:COMPUTERNAME user=$env:USERNAME ps=$($PSVersionTable.PSVersion.ToString()) script=$PSCommandPath"
+    $lockAcquired = Acquire-RunLock
+    if (-not $lockAcquired) {
+        Write-Log "Decision=cycle_skipped_lock_busy id=$cycleId user=$env:USERNAME"
+        return
+    }
+    Write-Log "run lock acquired id=$cycleId mutex=Global\TrilinkRemoteAgentMutex"
     Remove-OldLogs -DaysToKeep 10
     $state = Load-AgentState
     Write-Log "state loaded id=$cycleId failures=$($state.consecutiveFailures) hasAgentToken=$(-not [string]::IsNullOrWhiteSpace($state.agentToken)) hostId=$($state.hostId) rebootstrapRequired=$($state.rebootstrapRequired) lastSnapshotDate=$($state.lastFullSnapshotDate)"
@@ -641,10 +753,16 @@ try {
     }
 
     $installToken = Get-InstallToken
-    $installReadSource = Get-RegistryReadSource -SubKeyPath "SOFTWARE\Trilink\RemoteAgent" -ValueName "InstallToken"
+    $installReadSource = Get-InstallTokenReadSource
 
     Write-Log "PortalBaseUrl lido via $portalReadSource."
     Write-Log "DiscoveryToken lido via $tokenReadSource."
+    if ($discoveryToken -like "rhost_*") {
+        throw "DiscoveryToken invalido (parece InstallToken)."
+    }
+    if (-not [string]::IsNullOrWhiteSpace($installToken) -and ($installToken -notlike "rhost_*")) {
+        throw "InstallToken invalido (esperado prefixo rhost_)."
+    }
     if ([string]::IsNullOrWhiteSpace($installToken)) {
         Write-Log "InstallToken ausente (fonte $installReadSource). Bootstrap automatico pode ser bloqueado."
     } else {
@@ -659,6 +777,9 @@ try {
     $rustdeskId = Get-RustDeskId
     if ([string]::IsNullOrWhiteSpace($rustdeskId)) {
         throw "RustDesk ID vazio."
+    }
+    if ($rustdeskId -notmatch "^\d{7,12}$") {
+        throw "RustDesk ID invalido: $rustdeskId"
     }
 
     $sysproUpdatesFull = @(Get-SysproUpdates)
@@ -728,8 +849,13 @@ try {
 
     if ($needsBootstrap) {
         if ([string]::IsNullOrWhiteSpace($installToken)) {
-            Write-Log "Decision=bootstrap_blocked (InstallToken ausente)."
-            Mark-FailureAndSave -State $state
+            Write-Log "Decision=triagem_await_install_token (bootstrap bloqueado; aguardando InstallToken para continuar)."
+            if ($sendFullSnapshot) {
+                $state.lastSysproHash = $sysproHash
+                $state.lastFullSnapshotDate = $todayUtc
+            }
+            $state.consecutiveFailures = 0
+            Save-AgentState -State $state
             return
         }
 
@@ -758,6 +884,12 @@ try {
 
         $bootstrapData = Normalize-ApiData -Body $bootstrap.body
         $agentTokenFromApi = [string](Get-ObjectPropertyValue -Object $bootstrapData -Name "agentToken")
+        if ([string]::IsNullOrWhiteSpace($agentTokenFromApi)) {
+            $agentTokenFromApi = [string](Get-ObjectPropertyValue -Object $bootstrapData -Name "token")
+        }
+        if ([string]::IsNullOrWhiteSpace($agentTokenFromApi)) {
+            $agentTokenFromApi = [string](Get-NestedPropertyValue -Object $bootstrap.body -Path @("data", "agentToken"))
+        }
         if ([string]::IsNullOrWhiteSpace($agentTokenFromApi)) {
             Write-Log "Decision=bootstrap_failed_missing_token"
             Mark-FailureAndSave -State $state
@@ -858,4 +990,6 @@ try {
 } catch {
     Mark-FailureAndSave -State $state
     Write-Log "cycle failure message=$($_.Exception.Message)"
+} finally {
+    Release-RunLock
 }
