@@ -6,7 +6,7 @@ $AgentVersion = "trilink-agent-v1"
 $RegPath = "HKLM:\SOFTWARE\Trilink\RemoteAgent"
 
 $StateDir = Join-Path $env:ProgramData "Trilink\RemoteAgent"
-$LogsDir = "C:\Trilink\logs"
+$LogsDir = "C:\Trilink\Remote\Logs"
 $LogFile = Join-Path $LogsDir "agentRemote.log"
 $StateFile = Join-Path $StateDir "agent-state.json"
 $script:RegistryReadTrace = @{}
@@ -46,7 +46,7 @@ function Get-RustDeskExePath {
     $local = Join-Path $PSScriptRoot "rustdesk.exe"
     if (Test-Path $local) { return $local }
 
-    return "C:\Trilink\Remote\rustdesk.exe"
+    return "C:\Trilink\Remote\RustDesk\rustdesk.exe"
 }
 
 function Get-RustDeskId {
@@ -78,6 +78,71 @@ function Get-ServiceStatus {
     if ($null -eq $svc) { return "not_found" }
     if ($svc.Status -eq "Running") { return "running" }
     return "stopped"
+}
+
+function Apply-StartupJitter {
+    param([int]$MaxSeconds = 60)
+
+    if ($MaxSeconds -le 0) { return }
+    $delay = Get-Random -Minimum 0 -Maximum ($MaxSeconds + 1)
+    if ($delay -le 0) { return }
+
+    Write-Log "Jitter inicial aplicado: aguardando ${delay}s antes do ciclo."
+    Start-Sleep -Seconds $delay
+}
+
+function Get-PersistentBackoffSeconds {
+    param([int]$ConsecutiveFailures)
+
+    if ($ConsecutiveFailures -le 0) { return 0 }
+
+    $steps = @(0, 10, 20, 40, 60, 90)
+    $idx = [Math]::Min($ConsecutiveFailures, $steps.Count - 1)
+    return [int]$steps[$idx]
+}
+
+function Try-RecoverRustDeskService {
+    $before = Get-ServiceStatus
+    $result = [ordered]@{
+        serviceStatusBefore = $before
+        selfHealAttempted = $false
+        selfHealResult = "not_needed"
+        serviceStatusAfter = $before
+    }
+
+    if ($before -eq "running") {
+        return $result
+    }
+
+    $result.selfHealAttempted = $true
+    if ($before -eq "not_found") {
+        Write-Log "Self-healing: servico RustDesk nao encontrado para start."
+        $result.selfHealResult = "failed"
+        return $result
+    }
+
+    for ($attempt = 1; $attempt -le 2; $attempt++) {
+        try {
+            Write-Log "Self-healing: tentativa ${attempt}/2 para iniciar servico RustDesk."
+            Start-Service -Name "RustDesk" -ErrorAction Stop
+            Start-Sleep -Seconds 2
+        } catch {
+            Write-Log "Self-healing: falha na tentativa ${attempt}/2: $($_.Exception.Message)"
+        }
+
+        $afterAttempt = Get-ServiceStatus
+        if ($afterAttempt -eq "running") {
+            $result.serviceStatusAfter = "running"
+            $result.selfHealResult = "recovered"
+            Write-Log "Self-healing: servico RustDesk recuperado."
+            return $result
+        }
+    }
+
+    $result.serviceStatusAfter = Get-ServiceStatus
+    $result.selfHealResult = "failed"
+    Write-Log "Self-healing: nao foi possivel recuperar o servico RustDesk."
+    return $result
 }
 
 function Get-RegistryStringValue {
@@ -154,21 +219,28 @@ function Load-AgentState {
         return @{
             lastSysproHash = ""
             lastFullSnapshotDate = ""
+            consecutiveFailures = 0
         }
     }
 
     try {
         $raw = Get-Content -Raw -Path $StateFile
         $obj = $raw | ConvertFrom-Json
+        $consecutiveFailures = 0
+        if ($null -ne $obj.consecutiveFailures) {
+            [int]::TryParse([string]$obj.consecutiveFailures, [ref]$consecutiveFailures) | Out-Null
+        }
         return @{
             lastSysproHash = [string]$obj.lastSysproHash
             lastFullSnapshotDate = [string]$obj.lastFullSnapshotDate
+            consecutiveFailures = $consecutiveFailures
         }
     } catch {
         Write-Log "Falha ao ler estado local. Estado sera reiniciado."
         return @{
             lastSysproHash = ""
             lastFullSnapshotDate = ""
+            consecutiveFailures = 0
         }
     }
 }
@@ -176,13 +248,15 @@ function Load-AgentState {
 function Save-AgentState {
     param(
         [string]$LastSysproHash,
-        [string]$LastFullSnapshotDate
+        [string]$LastFullSnapshotDate,
+        [int]$ConsecutiveFailures = 0
     )
 
     Ensure-StateDir
     $state = [ordered]@{
         lastSysproHash = $LastSysproHash
         lastFullSnapshotDate = $LastFullSnapshotDate
+        consecutiveFailures = $ConsecutiveFailures
         updatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     }
     $state | ConvertTo-Json -Depth 5 | Set-Content -Path $StateFile -Encoding utf8
@@ -193,9 +267,9 @@ function Get-SysproUpdates {
     $results = @()
 
     # Nao depende de WMI/CIM (pode falhar em algumas maquinas com "Classe invalida").
-    $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object {
+    $drives = @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object {
         $_.Name -match '^[A-Za-z]$'
-    }
+    })
 
     if (-not $drives -or $drives.Count -eq 0) {
         Write-Log "Nenhuma unidade de sistema de arquivos encontrada para verificacao."
@@ -329,8 +403,23 @@ try {
     [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
 } catch {}
 
+$state = @{
+    lastSysproHash = ""
+    lastFullSnapshotDate = ""
+    consecutiveFailures = 0
+}
+
 try {
     Remove-OldLogs -DaysToKeep 10
+    $state = Load-AgentState
+
+    Apply-StartupJitter -MaxSeconds 60
+
+    $persistentDelay = Get-PersistentBackoffSeconds -ConsecutiveFailures $state.consecutiveFailures
+    if ($persistentDelay -gt 0) {
+        Write-Log "Backoff persistente aplicado (${persistentDelay}s) devido a $($state.consecutiveFailures) falhas consecutivas."
+        Start-Sleep -Seconds $persistentDelay
+    }
 
     $PortalBaseUrl = Get-PortalBaseUrl
     $portalReadSource = Get-RegistryReadSource -SubKeyPath "SOFTWARE\Trilink\RemoteAgent" -ValueName "PortalBaseUrl"
@@ -348,6 +437,11 @@ try {
 
     Write-Log "PortalBaseUrl lido via $portalReadSource."
     Write-Log "DiscoveryToken lido via $tokenReadSource."
+
+    $selfHeal = Try-RecoverRustDeskService
+    if ($selfHeal.selfHealAttempted) {
+        Write-Log "Self-healing status: before=$($selfHeal.serviceStatusBefore) result=$($selfHeal.selfHealResult) after=$($selfHeal.serviceStatusAfter)"
+    }
 
     $rustdeskId = Get-RustDeskId
     if ([string]::IsNullOrWhiteSpace($rustdeskId)) {
@@ -378,7 +472,11 @@ try {
         rustdeskId = $rustdeskId
         machineName = $env:COMPUTERNAME
         agentVersion = $AgentVersion
-        serviceStatus = (Get-ServiceStatus)
+        serviceStatus = [string]$selfHeal.serviceStatusAfter
+        serviceStatusBefore = [string]$selfHeal.serviceStatusBefore
+        selfHealAttempted = [bool]$selfHeal.selfHealAttempted
+        selfHealResult = [string]$selfHeal.selfHealResult
+        serviceStatusAfter = [string]$selfHeal.serviceStatusAfter
         sysproUpdates = $sysproUpdatesToSend
     }
 
@@ -386,14 +484,19 @@ try {
     $ok = Post-JsonWithRetry -Url $url -Payload $payload
     if ($ok) {
         if ($sendFullSnapshot) {
-            Save-AgentState -LastSysproHash $sysproHash -LastFullSnapshotDate $todayUtc
+            Save-AgentState -LastSysproHash $sysproHash -LastFullSnapshotDate $todayUtc -ConsecutiveFailures 0
         } else {
-            Save-AgentState -LastSysproHash $state.lastSysproHash -LastFullSnapshotDate $state.lastFullSnapshotDate
+            Save-AgentState -LastSysproHash $state.lastSysproHash -LastFullSnapshotDate $state.lastFullSnapshotDate -ConsecutiveFailures 0
         }
         Write-Log "Discover enviado com sucesso para $url | rustdeskId=$rustdeskId"
     } else {
+        $nextFailures = [int]$state.consecutiveFailures + 1
+        Save-AgentState -LastSysproHash $state.lastSysproHash -LastFullSnapshotDate $state.lastFullSnapshotDate -ConsecutiveFailures $nextFailures
         Write-Log "Discover falhou apos retries | rustdeskId=$rustdeskId"
     }
 } catch {
+    $nextFailures = [int]$state.consecutiveFailures + 1
+    Save-AgentState -LastSysproHash $state.lastSysproHash -LastFullSnapshotDate $state.lastFullSnapshotDate -ConsecutiveFailures $nextFailures
     Write-Log "Falha no agente: $($_.Exception.Message)"
 }
+

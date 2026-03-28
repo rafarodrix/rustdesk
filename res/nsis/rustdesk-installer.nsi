@@ -40,7 +40,7 @@ Unicode true
 Name "${APP_NAME}"
 OutFile "${OUTFILE}"
 RequestExecutionLevel admin
-InstallDir "C:\Trilink\Remote"
+InstallDir "C:\Trilink\Remote\RustDesk"
 InstallDirRegKey HKLM "Software\Trilink" "InstallDir"
 
 !include "MUI2.nsh"
@@ -68,8 +68,8 @@ Section "Install"
   Abort "PORTAL_BASE_URL nao informado. Recompile o instalador."
 
   ; 1. PREPARACAO: estrutura de logs centralizada
-  CreateDirectory "C:\Trilink\logs"
-  FileOpen $9 "C:\Trilink\logs\installRemote.log" a
+  CreateDirectory "C:\Trilink\Remote\Logs"
+  FileOpen $9 "C:\Trilink\Remote\Logs\installRemote.log" a
   FileWrite $9 "$\r$\n--- [${__DATE__} ${__TIME__}] Nova tentativa de instalacao Trilink ---$\r$\n"
 
   ; 2. LIMPEZA DE PROCESSOS
@@ -108,6 +108,10 @@ Section "Install"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayIcon" "$\"$INSTDIR\${APP_EXE}$\""
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "Publisher" "Trilink Software"
+  ; Chave gemea para reconhecimento da engine RustDesk
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayName" "Trilink Suporte Remoto (Engine)"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayVersion" "99.0.0"
 
   ; Forca o motor a reconhecer esta instalacao e desabilita update automatico
   WriteRegStr HKLM "Software\RustDesk" "InstallDir" "$INSTDIR"
@@ -126,6 +130,9 @@ Section "Install"
   WriteRegStr HKLM "Software\RustDesk" "ServiceRunning" "1"
   WriteRegDWORD HKLM "Software\RustDesk" "StopUpdate" 1
   WriteRegDWORD HKLM "Software\RustDesk" "CheckUpdate" 0
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayName" "Trilink Suporte Remoto (Engine)"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayVersion" "99.0.0"
   SetRegView 64
 
   ; 5. ATALHOS
@@ -194,7 +201,9 @@ Section "Uninstall"
   Abort "INSTDIR invalido (Raiz C:\\). Abortando por seguranca."
   StrCmp "$INSTDIR" "C:\Trilink" 0 +2
   Abort "INSTDIR invalido (Raiz Trilink). Abortando por seguranca para proteger outros apps."
-  StrCmp "$INSTDIR" "C:\Trilink\Remote" +2 0
+  StrCmp "$INSTDIR" "C:\Trilink\Remote" 0 +2
+  Abort "INSTDIR invalido (Raiz Remote). Abortando por seguranca para proteger logs e outros componentes."
+  StrCmp "$INSTDIR" "C:\Trilink\Remote\RustDesk" +2 0
   Abort "INSTDIR inesperado: $INSTDIR. Abortando por seguranca."
 
   RMDir /r "$INSTDIR"
@@ -202,12 +211,17 @@ Section "Uninstall"
   DeleteRegKey HKLM "Software\Trilink\RemoteAgent"
   DeleteRegKey HKLM "Software\RustDesk"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk"
 
   ; Remove espelho 32-bit
   SetRegView 32
   DeleteRegKey HKLM "Software\Trilink\RemoteAgent"
   DeleteRegKey HKLM "Software\RustDesk"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk"
   SetRegView 64
 SectionEnd
+
+
+
 
 
