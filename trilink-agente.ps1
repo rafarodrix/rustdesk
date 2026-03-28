@@ -192,9 +192,14 @@ function Get-SysproUpdates {
     Write-Log "Iniciando verificacao de caminho fixo: \\Syspro\\Server"
     $results = @()
 
-    $drives = Get-PSDrive -PSProvider FileSystem | Where-Object {
-        $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($_.Name):'" -ErrorAction SilentlyContinue
-        ($null -ne $disk) -and ($disk.DriveType -eq 3)
+    # Nao depende de WMI/CIM (pode falhar em algumas maquinas com "Classe invalida").
+    $drives = Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object {
+        $_.Name -match '^[A-Za-z]$'
+    }
+
+    if (-not $drives -or $drives.Count -eq 0) {
+        Write-Log "Nenhuma unidade de sistema de arquivos encontrada para verificacao."
+        return $results
     }
 
     foreach ($drive in $drives) {

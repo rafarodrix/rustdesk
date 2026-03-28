@@ -111,7 +111,8 @@ Section "Install"
 
   ; Forca o motor a reconhecer esta instalacao e desabilita update automatico
   WriteRegStr HKLM "Software\RustDesk" "InstallDir" "$INSTDIR"
-  WriteRegDWORD HKLM "Software\RustDesk" "Installed" 1
+  WriteRegStr HKLM "Software\RustDesk" "Installed" "1"
+  WriteRegStr HKLM "Software\RustDesk" "ServiceRunning" "1"
   WriteRegDWORD HKLM "Software\RustDesk" "StopUpdate" 1
   WriteRegDWORD HKLM "Software\RustDesk" "CheckUpdate" 0
 
@@ -121,7 +122,8 @@ Section "Install"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "DiscoveryToken" "${DISCOVERY_TOKEN}"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "PortalBaseUrl" "${PORTAL_BASE_URL}"
   WriteRegStr HKLM "Software\RustDesk" "InstallDir" "$INSTDIR"
-  WriteRegDWORD HKLM "Software\RustDesk" "Installed" 1
+  WriteRegStr HKLM "Software\RustDesk" "Installed" "1"
+  WriteRegStr HKLM "Software\RustDesk" "ServiceRunning" "1"
   WriteRegDWORD HKLM "Software\RustDesk" "StopUpdate" 1
   WriteRegDWORD HKLM "Software\RustDesk" "CheckUpdate" 0
   SetRegView 64
@@ -207,3 +209,5 @@ Section "Uninstall"
   DeleteRegKey HKLM "Software\RustDesk"
   SetRegView 64
 SectionEnd
+
+
