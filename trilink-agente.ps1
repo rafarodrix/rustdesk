@@ -86,7 +86,7 @@ function Get-RegistryStringValue {
         [string]$ValueName
     )
 
-    $traceKey = "$SubKeyPath::$ValueName"
+    $traceKey = "${SubKeyPath}::${ValueName}"
     $views = @(
         [Microsoft.Win32.RegistryView]::Registry64,
         [Microsoft.Win32.RegistryView]::Registry32
@@ -128,7 +128,7 @@ function Get-RegistryReadSource {
         [string]$ValueName
     )
 
-    $traceKey = "$SubKeyPath::$ValueName"
+    $traceKey = "${SubKeyPath}::${ValueName}"
     if ($script:RegistryReadTrace.ContainsKey($traceKey)) {
         return [string]$script:RegistryReadTrace[$traceKey]
     }
