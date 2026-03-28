@@ -9,6 +9,7 @@ $StateDir = Join-Path $env:ProgramData "Trilink\RemoteAgent"
 $LogsDir = "C:\Trilink\logs"
 $LogFile = Join-Path $LogsDir "agentRemote.log"
 $StateFile = Join-Path $StateDir "agent-state.json"
+$script:RegistryReadTrace = @{}
 
 function Ensure-StateDir {
     if (-not (Test-Path $StateDir)) {
@@ -24,6 +25,21 @@ function Write-Log {
     Ensure-StateDir
     $line = "$(Get-Date -Format o) | $Message"
     Add-Content -Path $LogFile -Value $line
+}
+
+function Remove-OldLogs {
+    param([int]$DaysToKeep = 10)
+
+    try {
+        if (-not (Test-Path $LogsDir)) { return }
+
+        $limit = (Get-Date).AddDays(-$DaysToKeep)
+        Get-ChildItem -Path $LogsDir -Filter "*.log" -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -lt $limit } |
+            Remove-Item -Force -ErrorAction SilentlyContinue
+    } catch {
+        # Nao bloqueia a execucao do agente por falha de limpeza.
+    }
 }
 
 function Get-RustDeskExePath {
@@ -64,19 +80,71 @@ function Get-ServiceStatus {
     return "stopped"
 }
 
+function Get-RegistryStringValue {
+    param(
+        [string]$SubKeyPath,
+        [string]$ValueName
+    )
+
+    $traceKey = "$SubKeyPath::$ValueName"
+    $views = @(
+        [Microsoft.Win32.RegistryView]::Registry64,
+        [Microsoft.Win32.RegistryView]::Registry32
+    )
+
+    foreach ($view in $views) {
+        try {
+            $base = [Microsoft.Win32.RegistryKey]::OpenBaseKey([Microsoft.Win32.RegistryHive]::LocalMachine, $view)
+            try {
+                $sub = $base.OpenSubKey($SubKeyPath)
+                if ($null -eq $sub) { continue }
+                try {
+                    $val = $sub.GetValue($ValueName)
+                    if ($null -ne $val) {
+                        $str = [string]$val
+                        if (-not [string]::IsNullOrWhiteSpace($str)) {
+                            $script:RegistryReadTrace[$traceKey] = [string]$view
+                            return $str
+                        }
+                    }
+                } finally {
+                    $sub.Close()
+                }
+            } finally {
+                $base.Close()
+            }
+        } catch {
+            continue
+        }
+    }
+
+    $script:RegistryReadTrace[$traceKey] = "not_found"
+    return $null
+}
+
+function Get-RegistryReadSource {
+    param(
+        [string]$SubKeyPath,
+        [string]$ValueName
+    )
+
+    $traceKey = "$SubKeyPath::$ValueName"
+    if ($script:RegistryReadTrace.ContainsKey($traceKey)) {
+        return [string]$script:RegistryReadTrace[$traceKey]
+    }
+
+    return "unknown"
+}
+
 function Get-DiscoveryToken {
-    try {
-        $val = (Get-ItemProperty -Path $RegPath -Name "DiscoveryToken" -ErrorAction Stop).DiscoveryToken
-        if (-not [string]::IsNullOrWhiteSpace($val)) { return [string]$val }
-    } catch {}
+    $val = Get-RegistryStringValue -SubKeyPath "SOFTWARE\Trilink\RemoteAgent" -ValueName "DiscoveryToken"
+    if (-not [string]::IsNullOrWhiteSpace($val)) { return [string]$val }
     return $null
 }
 
 function Get-PortalBaseUrl {
-    try {
-        $val = (Get-ItemProperty -Path $RegPath -Name "PortalBaseUrl" -ErrorAction Stop).PortalBaseUrl
-        if (-not [string]::IsNullOrWhiteSpace($val)) { return ([string]$val).TrimEnd('/') }
-    } catch {}
+    $val = Get-RegistryStringValue -SubKeyPath "SOFTWARE\Trilink\RemoteAgent" -ValueName "PortalBaseUrl"
+    if (-not [string]::IsNullOrWhiteSpace($val)) { return ([string]$val).TrimEnd('/') }
     return $null
 }
 
@@ -121,8 +189,45 @@ function Save-AgentState {
 }
 
 function Get-SysproUpdates {
-    # Placeholder: manter vazio ate integrar varredura real do inventario local.
-    return @()
+    Write-Log "Iniciando verificacao de caminho fixo: \\Syspro\\Server"
+    $results = @()
+
+    $drives = Get-PSDrive -PSProvider FileSystem | Where-Object {
+        $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='$($_.Name):'" -ErrorAction SilentlyContinue
+        ($null -ne $disk) -and ($disk.DriveType -eq 3)
+    }
+
+    foreach ($drive in $drives) {
+        $targetFolder = "$($drive.Name):\Syspro\Server"
+        $exePath = Join-Path $targetFolder "SysproServer.exe"
+
+        if (Test-Path $exePath) {
+            try {
+                $fileInfo = Get-Item $exePath
+                $versionInfo = [System.Diagnostics.FileVersionInfo]::GetVersionInfo($exePath)
+                $clientName = "Syspro-Server-$($drive.Name)"
+
+                $results += [ordered]@{
+                    # Campos atuais
+                    clientName = $clientName
+                    installPath = $targetFolder
+                    version = $versionInfo.FileVersion
+                    lastUpdateUtc = $fileInfo.LastWriteTime.ToUniversalTime().ToString("o")
+
+                    # Campos legados para compatibilidade
+                    empresa = $clientName
+                    caminho = $exePath
+                    ultimaAtualizacao = $fileInfo.LastWriteTime.ToString("yyyy-MM-dd HH:mm:ss")
+                }
+                Write-Log "Syspro detectado em: $targetFolder | versao=$($versionInfo.FileVersion)"
+            } catch {
+                Write-Log "Erro ao ler metadados de ${exePath}: $($_.Exception.Message)"
+            }
+        }
+    }
+
+    Write-Log "Verificacao concluida. Total encontrado: $($results.Count)"
+    return $results
 }
 
 function Get-Sha256Hex {
@@ -220,23 +325,29 @@ try {
 } catch {}
 
 try {
+    Remove-OldLogs -DaysToKeep 10
+
     $PortalBaseUrl = Get-PortalBaseUrl
+    $portalReadSource = Get-RegistryReadSource -SubKeyPath "SOFTWARE\Trilink\RemoteAgent" -ValueName "PortalBaseUrl"
     if ([string]::IsNullOrWhiteSpace($PortalBaseUrl)) {
-        Write-Log "PortalBaseUrl ausente no Registry ($RegPath). Execute o instalador novamente."
+        Write-Log "PortalBaseUrl ausente no Registry ($RegPath). Fonte: $portalReadSource. Execute o instalador novamente."
         exit 1
     }
 
     $DiscoveryToken = Get-DiscoveryToken
+    $tokenReadSource = Get-RegistryReadSource -SubKeyPath "SOFTWARE\Trilink\RemoteAgent" -ValueName "DiscoveryToken"
     if ([string]::IsNullOrWhiteSpace($DiscoveryToken)) {
-        Write-Log "DiscoveryToken ausente no Registry ($RegPath). Execute o instalador novamente."
+        Write-Log "DiscoveryToken ausente no Registry ($RegPath). Fonte: $tokenReadSource. Execute o instalador novamente."
         exit 1
     }
+
+    Write-Log "PortalBaseUrl lido via $portalReadSource."
+    Write-Log "DiscoveryToken lido via $tokenReadSource."
 
     $rustdeskId = Get-RustDeskId
     if ([string]::IsNullOrWhiteSpace($rustdeskId)) {
         throw "RustDesk ID vazio."
     }
-
 
     $sysproUpdatesFull = @(Get-SysproUpdates)
     $sysproJson = $sysproUpdatesFull | ConvertTo-Json -Depth 10 -Compress
@@ -281,5 +392,3 @@ try {
 } catch {
     Write-Log "Falha no agente: $($_.Exception.Message)"
 }
-
-

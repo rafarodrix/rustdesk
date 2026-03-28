@@ -115,6 +115,17 @@ Section "Install"
   WriteRegDWORD HKLM "Software\RustDesk" "StopUpdate" 1
   WriteRegDWORD HKLM "Software\RustDesk" "CheckUpdate" 0
 
+  ; Espelha chaves no view 32-bit para compatibilidade (WOW6432Node)
+  SetRegView 32
+  WriteRegStr HKLM "Software\Trilink\RemoteAgent" "InstallDir" "$INSTDIR"
+  WriteRegStr HKLM "Software\Trilink\RemoteAgent" "DiscoveryToken" "${DISCOVERY_TOKEN}"
+  WriteRegStr HKLM "Software\Trilink\RemoteAgent" "PortalBaseUrl" "${PORTAL_BASE_URL}"
+  WriteRegStr HKLM "Software\RustDesk" "InstallDir" "$INSTDIR"
+  WriteRegDWORD HKLM "Software\RustDesk" "Installed" 1
+  WriteRegDWORD HKLM "Software\RustDesk" "StopUpdate" 1
+  WriteRegDWORD HKLM "Software\RustDesk" "CheckUpdate" 0
+  SetRegView 64
+
   ; 5. ATALHOS
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
@@ -189,4 +200,10 @@ Section "Uninstall"
   DeleteRegKey HKLM "Software\Trilink\RemoteAgent"
   DeleteRegKey HKLM "Software\RustDesk"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
+
+  ; Remove espelho 32-bit
+  SetRegView 32
+  DeleteRegKey HKLM "Software\Trilink\RemoteAgent"
+  DeleteRegKey HKLM "Software\RustDesk"
+  SetRegView 64
 SectionEnd
