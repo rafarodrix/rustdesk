@@ -40,8 +40,8 @@ Unicode true
 Name "${APP_NAME}"
 OutFile "${OUTFILE}"
 RequestExecutionLevel admin
-InstallDir "$ProgramFiles64\${APP_NAME}"
-InstallDirRegKey HKLM "Software\${APP_NAME}" "InstallDir"
+InstallDir "C:\Trilink\Remote"
+InstallDirRegKey HKLM "Software\Trilink" "InstallDir"
 
 !include "MUI2.nsh"
 
@@ -68,12 +68,12 @@ Section "Install"
   Abort "PORTAL_BASE_URL nao informado. Recompile o instalador."
 
   ; 1. PREPARACAO: para o servico e mata processo antes de copiar
-  nsExec::ExecToStack '"$SYSDIR\sc.exe" stop RustDesk'
+  nsExec::ExecToLog '"$SYSDIR\sc.exe" stop RustDesk'
   Pop $0
-  nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /F /IM ${APP_EXE}'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM ${APP_EXE}'
   Pop $0
   Sleep 2000
-  nsExec::ExecToStack '"$SYSDIR\sc.exe" delete RustDesk'
+  nsExec::ExecToLog '"$SYSDIR\sc.exe" delete RustDesk'
   Pop $0
   Sleep 2000
 
@@ -83,10 +83,17 @@ Section "Install"
   File "${AGENT_SCRIPT}"
 
   ; 3. REGISTRO TRILINK
-  WriteRegStr HKLM "Software\${APP_NAME}" "InstallDir" "$INSTDIR"
+  WriteRegStr HKLM "Software\Trilink" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "DiscoveryToken" "${DISCOVERY_TOKEN}"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "PortalBaseUrl" "${PORTAL_BASE_URL}"
   WriteUninstaller "$INSTDIR\uninstall.exe"
+
+  ; 3.1 REGISTRO NO PAINEL DE CONTROLE (Windows Uninstall)
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayName" "${APP_NAME}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayIcon" "$\"$INSTDIR\${APP_EXE}$\""
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "Publisher" "Trilink Software"
 
   ; 4. REGISTRO RUSTDESK (esconde botao de instalar da engine)
   WriteRegStr HKLM "Software\RustDesk" "InstallDir" "$INSTDIR"
@@ -97,27 +104,29 @@ Section "Install"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\Desinstalar.lnk" "$INSTDIR\uninstall.exe"
   CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
 
-  ; 6. SERVICO: cria e inicia com validacao de retorno
-  nsExec::ExecToStack '"$SYSDIR\sc.exe" create RustDesk binPath= "$\"$INSTDIR\${APP_EXE}$\" --service" start= auto DisplayName= "Trilink Remote Service"'
+  ; 6. SERVICO: cria e inicia com validacao de retorno limpa (ExecToLog)
+  nsExec::ExecToLog '"$SYSDIR\sc.exe" create RustDesk binPath= "$\"$INSTDIR\${APP_EXE}$\" --service" start= auto DisplayName= "Trilink Remote Service"'
   Pop $0
   StrCmp $0 "0" +2 0
-  Abort "Falha ao criar servico RustDesk (sc create)."
+  Abort "Falha ao criar servico RustDesk (sc create). Codigo: $0"
 
-  nsExec::ExecToStack '"$SYSDIR\sc.exe" start RustDesk'
+  nsExec::ExecToLog '"$SYSDIR\sc.exe" start RustDesk'
   Pop $0
   StrCmp $0 "0" +2 0
-  Abort "Falha ao iniciar servico RustDesk (sc start)."
+  Abort "Falha ao iniciar servico RustDesk (sc start). Codigo: $0"
 
   ; 7. TAREFA AGENDADA (PowerShell Agent)
-  nsExec::ExecToStack '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'
+  nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'
   Pop $0
   StrCmp $0 "0" +2 0
-  Abort "Falha ao criar tarefa agendada TrilinkRemoteAgent."
+  Abort "Falha ao criar tarefa agendada TrilinkRemoteAgent. Codigo: $0"
 
   ; 8. EXECUTA O AGENTE AGORA
   nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\trilink-agente.ps1"'
+  Pop $0
 
-  ; 9. ABRE A TELA FINAL PARA O USUARIO
+  ; 9. ABRE A TELA FINAL PARA O USUARIO (nao abre em instalacao silenciosa /S)
+  IfSilent +2
   ExecShell "" "$INSTDIR\${APP_EXE}"
 SectionEnd
 
@@ -125,12 +134,12 @@ Section "Uninstall"
   SetRegView 64
 
   ; Mata tudo antes de deletar a pasta
-  nsExec::ExecToStack '"$SYSDIR\sc.exe" stop RustDesk'
+  nsExec::ExecToLog '"$SYSDIR\sc.exe" stop RustDesk'
   Pop $0
-  nsExec::ExecToStack '"$SYSDIR\taskkill.exe" /F /IM ${APP_EXE}'
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM ${APP_EXE}'
   Pop $0
   Sleep 2000
-  nsExec::ExecToStack '"$SYSDIR\sc.exe" delete RustDesk'
+  nsExec::ExecToLog '"$SYSDIR\sc.exe" delete RustDesk'
   Pop $0
 
   Delete "$DESKTOP\${APP_NAME}.lnk"
@@ -138,19 +147,22 @@ Section "Uninstall"
   Delete "$SMPROGRAMS\${APP_NAME}\Desinstalar.lnk"
   RMDir "$SMPROGRAMS\${APP_NAME}"
 
-  nsExec::ExecToStack '"$SYSDIR\schtasks.exe" /delete /tn "TrilinkRemoteAgent" /f'
+  nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /delete /tn "TrilinkRemoteAgent" /f'
   Pop $0
 
   ; Guarda de seguranca antes da remocao recursiva
   StrCmp "$INSTDIR" "" 0 +2
   Abort "INSTDIR vazio. Abortando desinstalacao por seguranca."
-  StrCmp "$INSTDIR" "$ProgramFiles64" 0 +2
-  Abort "INSTDIR invalido ($ProgramFiles64). Abortando por seguranca."
-  StrCmp "$INSTDIR" "$ProgramFiles64\${APP_NAME}" +2 0
+  StrCmp "$INSTDIR" "C:\" 0 +2
+  Abort "INSTDIR invalido (Raiz C:\\). Abortando por seguranca."
+  StrCmp "$INSTDIR" "C:\Trilink" 0 +2
+  Abort "INSTDIR invalido (Raiz Trilink). Abortando por seguranca para proteger outros apps."
+  StrCmp "$INSTDIR" "C:\Trilink\Remote" +2 0
   Abort "INSTDIR inesperado: $INSTDIR. Abortando por seguranca."
 
   RMDir /r "$INSTDIR"
-  DeleteRegKey HKLM "Software\${APP_NAME}"
+  DeleteRegValue HKLM "Software\Trilink" "InstallDir"
   DeleteRegKey HKLM "Software\Trilink\RemoteAgent"
   DeleteRegKey HKLM "Software\RustDesk"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
 SectionEnd

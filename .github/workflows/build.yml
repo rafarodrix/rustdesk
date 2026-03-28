@@ -60,6 +60,39 @@ jobs:
         with:
           submodules: recursive
 
+
+      - name: Inject Custom Trilink Icon
+        env:
+          CUSTOM_ICON_URL: ${{ secrets.CUSTOM_ICON_URL }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace("$env:CUSTOM_ICON_URL")) {
+            Write-Host "CUSTOM_ICON_URL nao configurado. Mantendo icones padrao."
+            exit 0
+          }
+
+          $tmpIcon = Join-Path $pwd "trilink.ico"
+          $iconTargets = @(
+            "res/rustdesk.ico",
+            "flutter/windows/runner/resources/app_icon.ico"
+          )
+
+          Write-Host "Baixando icone customizado..."
+          Invoke-WebRequest -Uri "$env:CUSTOM_ICON_URL" -OutFile $tmpIcon -ErrorAction Stop
+
+          if (-not (Test-Path $tmpIcon)) {
+            throw "Falha ao baixar o arquivo de icone em $tmpIcon"
+          }
+
+          foreach ($target in $iconTargets) {
+            if (Test-Path $target) {
+              Copy-Item -Path $tmpIcon -Destination $target -Force
+              Write-Host "Icone aplicado em $target"
+            } else {
+              Write-Warning "Caminho de icone nao encontrado: $target"
+            }
+          }
+
+          Remove-Item -Path $tmpIcon -Force
       - name: Set Build Metadata
         run: |
           $version = if ("${{ github.ref_type }}" -eq "tag") {
@@ -374,3 +407,4 @@ jobs:
             ${{ env.CHECKSUM_FILE }}
             ${{ env.DIAG_FILE }}
             ${{ env.NSIS_BUILT == 'true' && env.NSIS_OUTPUT || '' }}
+
