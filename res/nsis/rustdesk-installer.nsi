@@ -67,36 +67,53 @@ Section "Install"
   StrCmp "${PORTAL_BASE_URL}" "" 0 +2
   Abort "PORTAL_BASE_URL nao informado. Recompile o instalador."
 
-  ; 1. PREPARACAO: para o servico e mata processo antes de copiar
+  ; 1. PREPARACAO: estrutura de logs centralizada
+  CreateDirectory "C:\Trilink\logs"
+  FileOpen $9 "C:\Trilink\logs\installRemote.log" a
+  FileWrite $9 "$\r$\n--- [${__DATE__} ${__TIME__}] Nova tentativa de instalacao Trilink ---$\r$\n"
+
+  ; 2. LIMPEZA DE PROCESSOS
+  FileWrite $9 "Finalizando processos e servicos antigos...$\r$\n"
   nsExec::ExecToLog '"$SYSDIR\sc.exe" stop RustDesk'
   Pop $0
-  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM ${APP_EXE}'
+  FileWrite $9 "sc stop RustDesk -> Codigo: $0$\r$\n"
+
+  nsExec::ExecToLog '"$SYSDIR\taskkill.exe" /F /IM ${APP_EXE} /T'
   Pop $0
+  FileWrite $9 "taskkill ${APP_EXE} -> Codigo: $0$\r$\n"
+
   Sleep 2000
   nsExec::ExecToLog '"$SYSDIR\sc.exe" delete RustDesk'
   Pop $0
+  FileWrite $9 "sc delete RustDesk -> Codigo: $0$\r$\n"
   Sleep 2000
 
-  ; 2. COPIA DOS ARQUIVOS
+  ; 3. COPIA DOS ARQUIVOS
+  FileWrite $9 "Copiando binarios para $INSTDIR...$\r$\n"
   SetOutPath "$INSTDIR"
   File /r "${APP_SOURCE_DIR}\*"
   File "${AGENT_SCRIPT}"
 
-  ; 3. REGISTRO TRILINK
+  ; 4. REGISTRO TRILINK + LOCKS DE UPDATE/PATH
+  FileWrite $9 "Aplicando configuracoes de registro...$\r$\n"
   WriteRegStr HKLM "Software\Trilink" "InstallDir" "$INSTDIR"
+  WriteRegStr HKLM "Software\Trilink\RemoteAgent" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "DiscoveryToken" "${DISCOVERY_TOKEN}"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "PortalBaseUrl" "${PORTAL_BASE_URL}"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
-  ; 3.1 REGISTRO NO PAINEL DE CONTROLE (Windows Uninstall)
+  ; 4.1 REGISTRO NO PAINEL DE CONTROLE (Windows Uninstall)
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayIcon" "$\"$INSTDIR\${APP_EXE}$\""
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "Publisher" "Trilink Software"
 
-  ; 4. REGISTRO RUSTDESK (esconde botao de instalar da engine)
+  ; Forca o motor a reconhecer esta instalacao e desabilita update automatico
   WriteRegStr HKLM "Software\RustDesk" "InstallDir" "$INSTDIR"
+  WriteRegDWORD HKLM "Software\RustDesk" "Installed" 1
+  WriteRegDWORD HKLM "Software\RustDesk" "StopUpdate" 1
+  WriteRegDWORD HKLM "Software\RustDesk" "CheckUpdate" 0
 
   ; 5. ATALHOS
   CreateDirectory "$SMPROGRAMS\${APP_NAME}"
@@ -104,26 +121,33 @@ Section "Install"
   CreateShortcut "$SMPROGRAMS\${APP_NAME}\Desinstalar.lnk" "$INSTDIR\uninstall.exe"
   CreateShortcut "$DESKTOP\${APP_NAME}.lnk" "$INSTDIR\${APP_EXE}"
 
-  ; 6. SERVICO: cria e inicia com validacao de retorno limpa (ExecToLog)
+  ; 6. SERVICO
+  FileWrite $9 "Registrando servico RustDesk...$\r$\n"
   nsExec::ExecToLog '"$SYSDIR\sc.exe" create RustDesk binPath= "$\"$INSTDIR\${APP_EXE}$\" --service" start= auto DisplayName= "Trilink Remote Service"'
   Pop $0
+  FileWrite $9 "sc create RustDesk -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha ao criar servico RustDesk (sc create). Codigo: $0"
 
   nsExec::ExecToLog '"$SYSDIR\sc.exe" start RustDesk'
   Pop $0
+  FileWrite $9 "sc start RustDesk -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha ao iniciar servico RustDesk (sc start). Codigo: $0"
 
   ; 7. TAREFA AGENDADA (PowerShell Agent)
   nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'
   Pop $0
+  FileWrite $9 "schtasks create TrilinkRemoteAgent -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha ao criar tarefa agendada TrilinkRemoteAgent. Codigo: $0"
 
-  ; 8. EXECUTA O AGENTE AGORA
+  ; 8. EXECUCAO INICIAL DO AGENTE
   nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\trilink-agente.ps1"'
   Pop $0
+  FileWrite $9 "execucao inicial do agente -> Codigo: $0$\r$\n"
+  FileWrite $9 "--- Fim do log de instalacao ---$\r$\n"
+  FileClose $9
 
   ; 9. ABRE A TELA FINAL PARA O USUARIO (nao abre em instalacao silenciosa /S)
   IfSilent +2

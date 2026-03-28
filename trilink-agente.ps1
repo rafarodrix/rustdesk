@@ -6,12 +6,16 @@ $AgentVersion = "trilink-agent-v1"
 $RegPath = "HKLM:\SOFTWARE\Trilink\RemoteAgent"
 
 $StateDir = Join-Path $env:ProgramData "Trilink\RemoteAgent"
-$LogFile = Join-Path $StateDir "agent.log"
+$LogsDir = "C:\Trilink\logs"
+$LogFile = Join-Path $LogsDir "agentRemote.log"
 $StateFile = Join-Path $StateDir "agent-state.json"
 
 function Ensure-StateDir {
     if (-not (Test-Path $StateDir)) {
         New-Item -Path $StateDir -ItemType Directory -Force | Out-Null
+    }
+    if (-not (Test-Path $LogsDir)) {
+        New-Item -Path $LogsDir -ItemType Directory -Force | Out-Null
     }
 }
 
@@ -25,7 +29,8 @@ function Write-Log {
 function Get-RustDeskExePath {
     $local = Join-Path $PSScriptRoot "rustdesk.exe"
     if (Test-Path $local) { return $local }
-    return "$env:ProgramFiles\Trilink Suporte Remoto\rustdesk.exe"
+
+    return "C:\Trilink\Remote\rustdesk.exe"
 }
 
 function Get-RustDeskId {
@@ -276,4 +281,5 @@ try {
 } catch {
     Write-Log "Falha no agente: $($_.Exception.Message)"
 }
+
 
