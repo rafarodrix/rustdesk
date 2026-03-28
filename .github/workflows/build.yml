@@ -267,6 +267,9 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($appVersion)) {
             throw "Nao foi possivel extrair version do Cargo.toml para o NSIS."
           }
+          if ($appBuildDate -notmatch '^\d{4}-\d{2}-\d{2}( \d{2}:\d{2}(:\d{2})?)?$') {
+            throw "Formato invalido de APP_BUILD_DATE: '$appBuildDate'. Esperado yyyy-MM-dd HH:mm (ou HH:mm:ss)."
+          }
           $installToken = "$env:INSTALL_TOKEN"
 
           Write-Host "NSIS APP_SOURCE_DIR=$appSourceDir"

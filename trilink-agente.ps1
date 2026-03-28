@@ -85,6 +85,17 @@ function Mask-Secret {
     return ("*" * ($len - 4)) + $Value.Substring($len - 4)
 }
 
+function Truncate-Text {
+    param(
+        [AllowNull()][string]$Text,
+        [int]$MaxLength = 256
+    )
+    if ($null -eq $Text) { return "" }
+    if ($MaxLength -le 0) { return "" }
+    if ($Text.Length -le $MaxLength) { return $Text }
+    return $Text.Substring(0, $MaxLength)
+}
+
 function Get-TopLevelKeys {
     param([object]$Object)
     if ($null -eq $Object) { return "" }
@@ -110,10 +121,46 @@ function Remove-OldLogs {
     }
 }
 
+function Rotate-LogIfNeeded {
+    param(
+        [string]$FilePath,
+        [int]$MaxSizeKb = 2048
+    )
+
+    if ([string]::IsNullOrWhiteSpace($FilePath)) { return }
+    if (-not (Test-Path $FilePath)) { return }
+
+    try {
+        $sizeKb = ((Get-Item -Path $FilePath -ErrorAction Stop).Length / 1KB)
+        if ($sizeKb -le $MaxSizeKb) { return }
+
+        $dir = Split-Path -Path $FilePath -Parent
+        $leaf = Split-Path -Path $FilePath -Leaf
+        $stamp = Get-Date -Format "yyyyMMdd-HHmmss"
+        $archiveLeaf = $leaf -replace "\.log$", "-$stamp.log"
+        if ($archiveLeaf -eq $leaf) { $archiveLeaf = "$leaf-$stamp.log" }
+        $archivePath = Join-Path $dir $archiveLeaf
+        Move-Item -Path $FilePath -Destination $archivePath -Force -ErrorAction SilentlyContinue
+    } catch {
+        # Nao bloqueia execucao por falha de rotacao.
+    }
+}
+
 function Get-RustDeskExePath {
     $local = Join-Path $PSScriptRoot "rustdesk.exe"
     if (Test-Path $local) { return $local }
     return "C:\Trilink\Remote\RustDesk\rustdesk.exe"
+}
+
+function Get-ScriptVersionId {
+    try {
+        if (-not (Test-Path $PSCommandPath)) { return $AgentVersion }
+        $hash = Get-FileHash -Path $PSCommandPath -Algorithm SHA256 -ErrorAction Stop
+        if ($null -eq $hash -or [string]::IsNullOrWhiteSpace($hash.Hash)) { return $AgentVersion }
+        return "sha256:$([string]$hash.Hash)"
+    } catch {
+        return $AgentVersion
+    }
 }
 
 function Get-RustDeskId {
@@ -318,6 +365,11 @@ function New-DefaultState {
         hostId = ""
         rebootstrapRequired = $false
         lastSysproHash = ""
+        lastSoftwareHash = ""
+        lastSystemHash = ""
+        lastNetworkHash = ""
+        lastSoftwareScanUtc = ""
+        lastSystemSnapshotUtc = ""
         lastFullSnapshotDate = ""
         consecutiveFailures = 0
     }
@@ -347,6 +399,11 @@ function Load-AgentState {
         if ($null -ne $obj.hostId) { $state.hostId = [string]$obj.hostId }
         if ($null -ne $obj.rebootstrapRequired) { $state.rebootstrapRequired = To-Bool $obj.rebootstrapRequired }
         if ($null -ne $obj.lastSysproHash) { $state.lastSysproHash = [string]$obj.lastSysproHash }
+        if ($null -ne $obj.lastSoftwareHash) { $state.lastSoftwareHash = [string]$obj.lastSoftwareHash }
+        if ($null -ne $obj.lastSystemHash) { $state.lastSystemHash = [string]$obj.lastSystemHash }
+        if ($null -ne $obj.lastNetworkHash) { $state.lastNetworkHash = [string]$obj.lastNetworkHash }
+        if ($null -ne $obj.lastSoftwareScanUtc) { $state.lastSoftwareScanUtc = [string]$obj.lastSoftwareScanUtc }
+        if ($null -ne $obj.lastSystemSnapshotUtc) { $state.lastSystemSnapshotUtc = [string]$obj.lastSystemSnapshotUtc }
         if ($null -ne $obj.lastFullSnapshotDate) { $state.lastFullSnapshotDate = [string]$obj.lastFullSnapshotDate }
         if ($null -ne $obj.consecutiveFailures) {
             $failures = 0
@@ -370,11 +427,31 @@ function Save-AgentState {
         hostId = [string]$State.hostId
         rebootstrapRequired = [bool]$State.rebootstrapRequired
         lastSysproHash = [string]$State.lastSysproHash
+        lastSoftwareHash = [string]$State.lastSoftwareHash
+        lastSystemHash = [string]$State.lastSystemHash
+        lastNetworkHash = [string]$State.lastNetworkHash
+        lastSoftwareScanUtc = [string]$State.lastSoftwareScanUtc
+        lastSystemSnapshotUtc = [string]$State.lastSystemSnapshotUtc
         lastFullSnapshotDate = [string]$State.lastFullSnapshotDate
         consecutiveFailures = [int]$State.consecutiveFailures
         updatedAtUtc = (Get-Date).ToUniversalTime().ToString("o")
     }
     $payload | ConvertTo-Json -Depth 10 | Set-Content -Path $StateFile -Encoding utf8
+}
+
+function Is-RefreshDue {
+    param(
+        [string]$LastTimestampUtc,
+        [int]$WindowMinutes
+    )
+
+    if ($WindowMinutes -le 0) { return $true }
+    if ([string]::IsNullOrWhiteSpace($LastTimestampUtc)) { return $true }
+
+    $parsed = [DateTime]::MinValue
+    if (-not [DateTime]::TryParse([string]$LastTimestampUtc, [ref]$parsed)) { return $true }
+    $elapsed = (Get-Date).ToUniversalTime() - $parsed.ToUniversalTime()
+    return ($elapsed.TotalMinutes -ge $WindowMinutes)
 }
 
 function Get-SysproUpdates {
@@ -430,6 +507,207 @@ function Get-Sha256Hex {
         return ([System.BitConverter]::ToString($hashBytes)).Replace("-", "").ToLowerInvariant()
     } finally {
         $sha.Dispose()
+    }
+}
+
+function Get-SystemSnapshot {
+    param([string]$ServiceStatus)
+
+    $snapshot = [ordered]@{
+        osCaption = ""
+        osVersion = ""
+        osBuild = ""
+        osArchitecture = ""
+        totalRamMb = 0
+        freeRamMb = 0
+        cpuName = ""
+        cpuCores = 0
+        diskTotalGb = 0
+        diskFreeGb = 0
+        uptimeSeconds = 0
+        timezone = ""
+        domainOrWorkgroup = ""
+        currentUser = [string]$env:USERNAME
+        serviceStatus = [string]$ServiceStatus
+    }
+
+    try {
+        $os = Get-CimInstance Win32_OperatingSystem -ErrorAction Stop
+        $snapshot.osCaption = Truncate-Text -Text ([string]$os.Caption) -MaxLength 256
+        $snapshot.osVersion = Truncate-Text -Text ([string]$os.Version) -MaxLength 64
+        $snapshot.osBuild = Truncate-Text -Text ([string]$os.BuildNumber) -MaxLength 32
+        $snapshot.osArchitecture = Truncate-Text -Text ([string]$os.OSArchitecture) -MaxLength 64
+        if ($null -ne $os.TotalVisibleMemorySize) { $snapshot.totalRamMb = [int][Math]::Round(([double]$os.TotalVisibleMemorySize / 1024.0), 0) }
+        if ($null -ne $os.FreePhysicalMemory) { $snapshot.freeRamMb = [int][Math]::Round(([double]$os.FreePhysicalMemory / 1024.0), 0) }
+        if ($null -ne $os.LastBootUpTime) {
+            $boot = [DateTime]$os.LastBootUpTime
+            $snapshot.uptimeSeconds = [int][Math]::Max(0, (New-TimeSpan -Start $boot -End (Get-Date)).TotalSeconds)
+        }
+    } catch {}
+
+    try {
+        $cpu = Get-CimInstance Win32_Processor -ErrorAction Stop | Select-Object -First 1
+        if ($null -ne $cpu) {
+            $snapshot.cpuName = Truncate-Text -Text ([string]$cpu.Name) -MaxLength 256
+            if ($null -ne $cpu.NumberOfCores) { $snapshot.cpuCores = [int]$cpu.NumberOfCores }
+        }
+    } catch {}
+
+    try {
+        $disk = Get-CimInstance Win32_LogicalDisk -Filter "DeviceID='C:'" -ErrorAction Stop | Select-Object -First 1
+        if ($null -eq $disk) {
+            $disk = Get-CimInstance Win32_LogicalDisk -Filter "DriveType=3" -ErrorAction SilentlyContinue | Select-Object -First 1
+        }
+        if ($null -ne $disk) {
+            if ($null -ne $disk.Size) { $snapshot.diskTotalGb = [int][Math]::Round(([double]$disk.Size / 1GB), 0) }
+            if ($null -ne $disk.FreeSpace) { $snapshot.diskFreeGb = [int][Math]::Round(([double]$disk.FreeSpace / 1GB), 0) }
+        }
+    } catch {}
+
+    try {
+        $tz = Get-TimeZone -ErrorAction Stop
+        $snapshot.timezone = Truncate-Text -Text ([string]$tz.Id) -MaxLength 128
+    } catch {}
+
+    try {
+        $cs = Get-CimInstance Win32_ComputerSystem -ErrorAction Stop
+        if (-not [string]::IsNullOrWhiteSpace([string]$cs.Domain)) {
+            $snapshot.domainOrWorkgroup = Truncate-Text -Text ([string]$cs.Domain) -MaxLength 128
+        } elseif (-not [string]::IsNullOrWhiteSpace([string]$cs.Workgroup)) {
+            $snapshot.domainOrWorkgroup = Truncate-Text -Text ([string]$cs.Workgroup) -MaxLength 128
+        }
+    } catch {}
+
+    return $snapshot
+}
+
+function Get-NetworkSnapshot {
+    $snapshot = [ordered]@{
+        defaultGateway = ""
+        dnsServers = @()
+        adapters = @()
+    }
+
+    $hasModernNetCmdlets = $null -ne (Get-Command Get-NetRoute -ErrorAction SilentlyContinue)
+    if (-not $hasModernNetCmdlets) {
+        try {
+            if ($null -ne (Get-Command Get-CimInstance -ErrorAction SilentlyContinue)) {
+                $nics = Get-CimInstance Win32_NetworkAdapterConfiguration -Filter "IPEnabled=True" -ErrorAction Stop
+            } else {
+                $nics = Get-WmiObject Win32_NetworkAdapterConfiguration -Filter "IPEnabled=True" -ErrorAction Stop
+            }
+            foreach ($nic in $nics) {
+                if ($nic.IPAddress -and $nic.IPAddress.Count -gt 0) {
+                    $snapshot.adapters += [ordered]@{
+                        alias = Truncate-Text -Text ([string]$nic.Description) -MaxLength 128
+                        ip = [string]$nic.IPAddress[0]
+                        prefix = 0
+                    }
+                }
+                if ($nic.DefaultIPGateway -and [string]::IsNullOrWhiteSpace($snapshot.defaultGateway)) {
+                    $snapshot.defaultGateway = [string]$nic.DefaultIPGateway[0]
+                }
+                if ($nic.DNSServerSearchOrder) {
+                    $snapshot.dnsServers += @($nic.DNSServerSearchOrder | Select-Object -First 3 | ForEach-Object { [string]$_ })
+                }
+            }
+            if ($snapshot.dnsServers.Count -gt 0) {
+                $snapshot.dnsServers = @($snapshot.dnsServers | Select-Object -Unique | Select-Object -First 6)
+            }
+        } catch {}
+        return $snapshot
+    }
+
+    try {
+        $route = Get-NetRoute -DestinationPrefix "0.0.0.0/0" -AddressFamily IPv4 -ErrorAction Stop |
+            Sort-Object RouteMetric, InterfaceMetric |
+            Select-Object -First 1
+        if ($null -ne $route -and -not [string]::IsNullOrWhiteSpace([string]$route.NextHop)) {
+            $snapshot.defaultGateway = [string]$route.NextHop
+        }
+    } catch {}
+
+    try {
+        $dns = Get-DnsClientServerAddress -AddressFamily IPv4 -ErrorAction Stop |
+            Where-Object { $_.ServerAddresses -and $_.ServerAddresses.Count -gt 0 } |
+            ForEach-Object { $_.ServerAddresses } |
+            Select-Object -Unique
+        if ($dns) { $snapshot.dnsServers = @($dns | ForEach-Object { [string]$_ } | Select-Object -First 6) }
+    } catch {}
+
+    try {
+        $adapters = @()
+        $ips = Get-NetIPAddress -AddressFamily IPv4 -ErrorAction Stop |
+            Where-Object { $_.IPAddress -and $_.IPAddress -ne "127.0.0.1" -and $_.PrefixOrigin -ne "WellKnown" }
+        foreach ($ip in $ips) {
+            $adapters += [ordered]@{
+                alias = Truncate-Text -Text ([string]$ip.InterfaceAlias) -MaxLength 128
+                ip = [string]$ip.IPAddress
+                prefix = [int]$ip.PrefixLength
+            }
+        }
+        if ($adapters.Count -gt 0) {
+            $snapshot.adapters = @($adapters | Select-Object -First 12)
+        }
+    } catch {}
+
+    return $snapshot
+}
+
+function Get-InstalledSoftwareSnapshot {
+    param([int]$MaxItems = 200)
+
+    $paths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+
+    $list = @()
+    foreach ($path in $paths) {
+        try {
+            $items = Get-ItemProperty -Path $path -ErrorAction SilentlyContinue
+            foreach ($it in $items) {
+                $name = [string]$it.DisplayName
+                if ([string]::IsNullOrWhiteSpace($name)) { continue }
+                $list += [ordered]@{
+                    name = Truncate-Text -Text $name -MaxLength 256
+                    version = Truncate-Text -Text ([string]$it.DisplayVersion) -MaxLength 64
+                    publisher = Truncate-Text -Text ([string]$it.Publisher) -MaxLength 256
+                    installDate = Truncate-Text -Text ([string]$it.InstallDate) -MaxLength 32
+                    installLocation = Truncate-Text -Text ([string]$it.InstallLocation) -MaxLength 512
+                }
+            }
+        } catch {}
+    }
+
+    $seen = @{}
+    $deduped = @()
+    foreach ($item in $list) {
+        $key = "$($item.name)|$($item.version)|$($item.publisher)"
+        if (-not $seen.ContainsKey($key)) {
+            $seen[$key] = $true
+            $deduped += $item
+        }
+    }
+
+    return @($deduped | Sort-Object { [string]$_.name } | Select-Object -First $MaxItems)
+}
+
+function New-AgentMetrics {
+    param(
+        [System.Diagnostics.Stopwatch]$CycleStopwatch,
+        [hashtable]$PhaseTimings,
+        [hashtable]$SelfHeal,
+        [string]$ScriptVersion
+    )
+
+    return [ordered]@{
+        cycleElapsedMs = [int]$CycleStopwatch.ElapsedMilliseconds
+        phaseTimings = $PhaseTimings
+        psVersion = [string]$PSVersionTable.PSVersion.ToString()
+        scriptVersion = [string]$ScriptVersion
+        selfHealAttempted = [bool]$SelfHeal.selfHealAttempted
+        selfHealResult = [string]$SelfHeal.selfHealResult
     }
 }
 
@@ -712,13 +990,21 @@ function Mark-FailureAndSave {
 }
 
 try {
-    [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-} catch {}
+    $tls13 = [Net.SecurityProtocolType]::Tls13
+    [Net.ServicePointManager]::SecurityProtocol = $tls13 -bor [Net.SecurityProtocolType]::Tls12
+} catch {
+    try {
+        [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+    } catch {}
+}
 
 $state = New-DefaultState
 
 try {
     $cycleId = ([Guid]::NewGuid().ToString("N")).Substring(0, 10)
+    $cycleWatch = [System.Diagnostics.Stopwatch]::StartNew()
+    $phaseTimings = @{}
+    $scriptVersion = Get-ScriptVersionId
     Write-Log "cycle start id=$cycleId computer=$env:COMPUTERNAME user=$env:USERNAME ps=$($PSVersionTable.PSVersion.ToString()) script=$PSCommandPath"
     $lockAcquired = Acquire-RunLock
     if (-not $lockAcquired) {
@@ -727,6 +1013,8 @@ try {
     }
     Write-Log "run lock acquired id=$cycleId mutex=Global\TrilinkRemoteAgentMutex"
     Remove-OldLogs -DaysToKeep 10
+    Rotate-LogIfNeeded -FilePath $LogFile -MaxSizeKb 2048
+    Rotate-LogIfNeeded -FilePath $DebugLogFile -MaxSizeKb 4096
     $state = Load-AgentState
     Write-Log "state loaded id=$cycleId failures=$($state.consecutiveFailures) hasAgentToken=$(-not [string]::IsNullOrWhiteSpace($state.agentToken)) hostId=$($state.hostId) rebootstrapRequired=$($state.rebootstrapRequired) lastSnapshotDate=$($state.lastFullSnapshotDate)"
 
@@ -815,7 +1103,9 @@ try {
 
     $discoverUrl = "$portalBaseUrl/api/remote/agents/discover"
     Write-Log "discover request: rustdeskId=$rustdeskId machine=$env:COMPUTERNAME serviceAfter=$($selfHeal.serviceStatusAfter) updatesCount=$($sysproUpdatesToSend.Count)"
+    $phaseDiscoverSw = [System.Diagnostics.Stopwatch]::StartNew()
     $discover = Post-JsonWithRetry -Url $discoverUrl -Payload $discoverPayload -Operation "discover"
+    $phaseTimings.discover = [int]$phaseDiscoverSw.ElapsedMilliseconds
     if (-not $discover.ok) {
         Write-Log "Decision=discover_failed status=$($discover.statusCode) error=$($discover.error)"
         Mark-FailureAndSave -State $state
@@ -870,7 +1160,9 @@ try {
 
         $bootstrapUrl = "$portalBaseUrl/api/remote/rustdesk/bootstrap"
         Write-Log "bootstrap request: rustdeskId=$rustdeskId machine=$env:COMPUTERNAME installTokenMask=$(Mask-Secret -Value $installToken)"
+        $phaseBootstrapSw = [System.Diagnostics.Stopwatch]::StartNew()
         $bootstrap = Post-JsonWithRetry -Url $bootstrapUrl -Payload $bootstrapPayload -Operation "bootstrap"
+        $phaseTimings.bootstrap = [int]$phaseBootstrapSw.ElapsedMilliseconds
         if (-not $bootstrap.ok) {
             if ($bootstrap.statusCode -eq 401 -or $bootstrap.statusCode -eq 403) {
                 $state.agentToken = ""
@@ -908,6 +1200,52 @@ try {
         Write-Log "Decision=sync_direto (token local reutilizado mask=$(Mask-Secret -Value $agentToken))."
     }
 
+    $softwareSnapshotHash = [string]$state.lastSoftwareHash
+    $softwareSnapshotChanged = $false
+    $softwareSnapshotToSend = @()
+    $softwareScanPerformed = $false
+    $softwareScanDue = ([string]::IsNullOrWhiteSpace($state.lastSoftwareHash) -or (Is-RefreshDue -LastTimestampUtc $state.lastSoftwareScanUtc -WindowMinutes 360))
+    if ($softwareScanDue) {
+        $softwareSnapshotFull = Get-InstalledSoftwareSnapshot -MaxItems 200
+        $softwareSnapshotJson = $softwareSnapshotFull | ConvertTo-Json -Depth 6 -Compress
+        $softwareSnapshotHash = Get-Sha256Hex -InputText $softwareSnapshotJson
+        $softwareSnapshotChanged = ($state.lastSoftwareHash -ne $softwareSnapshotHash)
+        $softwareSnapshotToSend = if ($softwareSnapshotChanged) { $softwareSnapshotFull } else { @() }
+        $softwareScanPerformed = $true
+        Write-Log "softwareSnapshot: scan_due=true changed=$softwareSnapshotChanged count=$($softwareSnapshotToSend.Count)"
+    } else {
+        Write-Log "softwareSnapshot: scan_due=false changed=false count=0"
+    }
+
+    $systemSnapshotFull = Get-SystemSnapshot -ServiceStatus ([string]$selfHeal.serviceStatusAfter)
+    $systemStaticFields = [ordered]@{
+        osCaption = [string]$systemSnapshotFull.osCaption
+        osVersion = [string]$systemSnapshotFull.osVersion
+        osBuild = [string]$systemSnapshotFull.osBuild
+        osArchitecture = [string]$systemSnapshotFull.osArchitecture
+        totalRamMb = [int]$systemSnapshotFull.totalRamMb
+        cpuName = [string]$systemSnapshotFull.cpuName
+        cpuCores = [int]$systemSnapshotFull.cpuCores
+        diskTotalGb = [int]$systemSnapshotFull.diskTotalGb
+        timezone = [string]$systemSnapshotFull.timezone
+        domainOrWorkgroup = [string]$systemSnapshotFull.domainOrWorkgroup
+    }
+    $systemSnapshotJson = $systemStaticFields | ConvertTo-Json -Depth 3 -Compress
+    $systemSnapshotHash = Get-Sha256Hex -InputText $systemSnapshotJson
+    $systemRefreshDue = Is-RefreshDue -LastTimestampUtc $state.lastSystemSnapshotUtc -WindowMinutes 30
+    $systemSnapshotChanged = (($state.lastSystemHash -ne $systemSnapshotHash) -or $systemRefreshDue)
+    $systemSnapshotToSend = if ($systemSnapshotChanged) { $systemSnapshotFull } else { $null }
+    Write-Log "systemSnapshot: changed=$systemSnapshotChanged refreshDue=$systemRefreshDue osBuild=$($systemSnapshotFull.osBuild) diskFreeGb=$($systemSnapshotFull.diskFreeGb)"
+
+    $networkSnapshotFull = Get-NetworkSnapshot
+    $networkSnapshotJson = $networkSnapshotFull | ConvertTo-Json -Depth 4 -Compress
+    $networkSnapshotHash = Get-Sha256Hex -InputText $networkSnapshotJson
+    $networkSnapshotChanged = ($state.lastNetworkHash -ne $networkSnapshotHash)
+    $networkSnapshotToSend = if ($networkSnapshotChanged) { $networkSnapshotFull } else { $null }
+    Write-Log "networkSnapshot: changed=$networkSnapshotChanged adapters=$($networkSnapshotFull.adapters.Count)"
+
+    $metricsPreSync = New-AgentMetrics -CycleStopwatch $cycleWatch -PhaseTimings $phaseTimings -SelfHeal $selfHeal -ScriptVersion $scriptVersion
+
     $syncPayload = @{
         agentToken = $agentToken
         rustdeskId = $rustdeskId
@@ -915,11 +1253,17 @@ try {
         agentVersion = $AgentVersion
         serviceStatus = [string]$selfHeal.serviceStatusAfter
         sysproUpdates = $sysproUpdatesToSend
+        systemSnapshot = $systemSnapshotToSend
+        networkSnapshot = $networkSnapshotToSend
+        softwareSnapshot = $softwareSnapshotToSend
+        agentMetrics = $metricsPreSync
     }
 
     $syncUrl = "$portalBaseUrl/api/remote/rustdesk/sync"
     Write-Log "sync request: rustdeskId=$rustdeskId machine=$env:COMPUTERNAME tokenMask=$(Mask-Secret -Value $agentToken) updatesCount=$($sysproUpdatesToSend.Count)"
+    $phaseSyncSw = [System.Diagnostics.Stopwatch]::StartNew()
     $sync = Post-JsonWithRetry -Url $syncUrl -Payload $syncPayload -Operation "sync"
+    $phaseTimings.sync = [int]$phaseSyncSw.ElapsedMilliseconds
     if (-not $sync.ok) {
         if ($sync.statusCode -eq 401 -or $sync.statusCode -eq 403) {
             $state.agentToken = ""
@@ -940,6 +1284,7 @@ try {
     $queue = Extract-CommandQueue -SyncData $syncData
     Write-Log "sync OK. commandQueue=$($queue.Count)"
 
+    $phaseAckTotal = 0
     foreach ($cmd in $queue) {
         $commandId = [string](Get-ObjectPropertyValue -Object $cmd -Name "id")
         if ([string]::IsNullOrWhiteSpace($commandId)) {
@@ -961,7 +1306,9 @@ try {
 
         $ackUrl = "$portalBaseUrl/api/remote/rustdesk/ack"
         Write-Log "ack request: commandId=$commandId status=$($exec.status) tokenMask=$(Mask-Secret -Value $state.agentToken)"
+        $phaseAckSw = [System.Diagnostics.Stopwatch]::StartNew()
         $ack = Post-JsonWithRetry -Url $ackUrl -Payload $ackPayload -Operation "ack"
+        $phaseAckTotal += [int]$phaseAckSw.ElapsedMilliseconds
         if (-not $ack.ok) {
             if ($ack.statusCode -eq 401 -or $ack.statusCode -eq 403) {
                 $state.agentToken = ""
@@ -979,11 +1326,20 @@ try {
             Write-Log "Decision=rebootstrap_required_after_ack commandId=$commandId"
         }
     }
+    $phaseTimings.ack = [int]$phaseAckTotal
+    $phaseTimings.ackCount = [int]$queue.Count
+    Write-Log "ack loop: commands=$($queue.Count) totalMs=$phaseAckTotal"
 
     if ($sendFullSnapshot) {
         $state.lastSysproHash = $sysproHash
         $state.lastFullSnapshotDate = $todayUtc
     }
+    if ($softwareSnapshotChanged) { $state.lastSoftwareHash = $softwareSnapshotHash }
+    if ($systemSnapshotChanged) { $state.lastSystemHash = $systemSnapshotHash }
+    if ($networkSnapshotChanged) { $state.lastNetworkHash = $networkSnapshotHash }
+    if ($softwareScanPerformed) { $state.lastSoftwareScanUtc = (Get-Date).ToUniversalTime().ToString("o") }
+    if ($systemSnapshotChanged) { $state.lastSystemSnapshotUtc = (Get-Date).ToUniversalTime().ToString("o") }
+    Write-Log "cycle timings: discover=$($phaseTimings['discover'])ms bootstrap=$($phaseTimings['bootstrap'])ms sync=$($phaseTimings['sync'])ms ack=$($phaseTimings['ack'])ms total=$($cycleWatch.ElapsedMilliseconds)ms"
     $state.consecutiveFailures = 0
     Save-AgentState -State $state
     Write-Log "cycle success id=$cycleId hostId=$($state.hostId) hasAgentToken=$(-not [string]::IsNullOrWhiteSpace($state.agentToken)) snapshotDate=$($state.lastFullSnapshotDate)"

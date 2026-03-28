@@ -51,6 +51,10 @@
   !define INSTALL_TOKEN ""
 !endif
 
+!ifndef APP_ICON
+  !define APP_ICON ".\res\icon.ico"
+!endif
+
 Unicode true
 Name "${APP_NAME}"
 OutFile "${OUTFILE}"
@@ -61,8 +65,8 @@ InstallDirRegKey HKLM "Software\Trilink" "InstallDir"
 !include "MUI2.nsh"
 
 !define MUI_ABORTWARNING
-!define MUI_ICON "${NSISDIR}\Contrib\Graphics\Icons\modern-install.ico"
-!define MUI_UNICON "${NSISDIR}\Contrib\Graphics\Icons\modern-uninstall.ico"
+!define MUI_ICON "${APP_ICON}"
+!define MUI_UNICON "${APP_ICON}" 
 
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
@@ -133,6 +137,7 @@ Section "Install"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "BuildDate" "${APP_BUILD_DATE}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayIcon" "$\"$INSTDIR\${APP_EXE}$\",0"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1" "BuildDate" "${APP_BUILD_DATE}"
 
@@ -187,9 +192,13 @@ Section "Install"
   nsExec::ExecToLog '"$INSTDIR\${APP_EXE}" --option enable-check-update N'
   Pop $0
   FileWrite $9 "set option enable-check-update=N -> Codigo: $0$\r$\n"
+  StrCmp $0 "0" +2 0
+  Abort "Falha ao aplicar enable-check-update=N. Codigo: $0"
   nsExec::ExecToLog '"$INSTDIR\${APP_EXE}" --option allow-auto-update N'
   Pop $0
   FileWrite $9 "set option allow-auto-update=N -> Codigo: $0$\r$\n"
+  StrCmp $0 "0" +2 0
+  Abort "Falha ao aplicar allow-auto-update=N. Codigo: $0"
 
   ; 7. TAREFA AGENDADA (PowerShell Agent)
   nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'
