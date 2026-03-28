@@ -4,9 +4,12 @@
 ;   /DAPP_EXE
 ;   /DAPP_SOURCE_DIR
 ;   /DOUTFILE
+;   /DAPP_VERSION (optional, defaults to Cargo version)
+;   /DAPP_BUILD_DATE (optional, defaults to build timestamp)
 ;   /DAGENT_SCRIPT (optional, defaults to trilink-agente.ps1 in repo root)
 ;   /DDISCOVERY_TOKEN
 ;   /DPORTAL_BASE_URL
+;   /DINSTALL_TOKEN (optional, usado no bootstrap autenticado)
 
 !ifndef APP_NAME
   !define APP_NAME "Trilink Suporte Remoto"
@@ -24,6 +27,14 @@
   !define OUTFILE "Trilink-Suporte-Installer.exe"
 !endif
 
+!ifndef APP_VERSION
+  !define APP_VERSION "1.4.6"
+!endif
+
+!ifndef APP_BUILD_DATE
+  !define APP_BUILD_DATE "1970-01-01 00:00"
+!endif
+
 !ifndef AGENT_SCRIPT
   !define AGENT_SCRIPT "trilink-agente.ps1"
 !endif
@@ -34,6 +45,10 @@
 
 !ifndef PORTAL_BASE_URL
   !define PORTAL_BASE_URL ""
+!endif
+
+!ifndef INSTALL_TOKEN
+  !define INSTALL_TOKEN ""
 !endif
 
 Unicode true
@@ -100,18 +115,26 @@ Section "Install"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "DiscoveryToken" "${DISCOVERY_TOKEN}"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "PortalBaseUrl" "${PORTAL_BASE_URL}"
+  WriteRegStr HKLM "Software\Trilink\RemoteAgent" "InstallToken" "${INSTALL_TOKEN}"
   WriteUninstaller "$INSTDIR\uninstall.exe"
 
   ; 4.1 REGISTRO NO PAINEL DE CONTROLE (Windows Uninstall)
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayName" "${APP_NAME}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "BuildDate" "${APP_BUILD_DATE}"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "QuietUninstallString" "$\"$INSTDIR\uninstall.exe$\" /S"
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayIcon" "$\"$INSTDIR\${APP_EXE}$\""
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "DisplayIcon" "$\"$INSTDIR\${APP_EXE}$\",0"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}" "Publisher" "Trilink Software"
   ; Chave gemea para reconhecimento da engine RustDesk
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayName" "Trilink Suporte Remoto (Engine)"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayVersion" "99.0.0"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "BuildDate" "${APP_BUILD_DATE}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1" "BuildDate" "${APP_BUILD_DATE}"
 
   ; Forca o motor a reconhecer esta instalacao e desabilita update automatico
   WriteRegStr HKLM "Software\RustDesk" "InstallDir" "$INSTDIR"
@@ -125,14 +148,19 @@ Section "Install"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "DiscoveryToken" "${DISCOVERY_TOKEN}"
   WriteRegStr HKLM "Software\Trilink\RemoteAgent" "PortalBaseUrl" "${PORTAL_BASE_URL}"
+  WriteRegStr HKLM "Software\Trilink\RemoteAgent" "InstallToken" "${INSTALL_TOKEN}"
   WriteRegStr HKLM "Software\RustDesk" "InstallDir" "$INSTDIR"
   WriteRegStr HKLM "Software\RustDesk" "Installed" "1"
   WriteRegStr HKLM "Software\RustDesk" "ServiceRunning" "1"
   WriteRegDWORD HKLM "Software\RustDesk" "StopUpdate" 1
   WriteRegDWORD HKLM "Software\RustDesk" "CheckUpdate" 0
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayName" "Trilink Suporte Remoto (Engine)"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "InstallLocation" "$INSTDIR"
   WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "UninstallString" "$\"$INSTDIR\uninstall.exe$\""
-  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayVersion" "99.0.0"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "BuildDate" "${APP_BUILD_DATE}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk" "DisplayVersion" "${APP_VERSION}"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1" "InstallLocation" "$INSTDIR"
+  WriteRegStr HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1" "BuildDate" "${APP_BUILD_DATE}"
   SetRegView 64
 
   ; 5. ATALHOS
@@ -154,6 +182,14 @@ Section "Install"
   FileWrite $9 "sc start RustDesk -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha ao iniciar servico RustDesk (sc start). Codigo: $0"
+
+  ; 6.1 DESABILITA VERIFICACAO/AUTOMACAO DE UPDATE NA CONFIG DO CLIENTE
+  nsExec::ExecToLog '"$INSTDIR\${APP_EXE}" --option enable-check-update N'
+  Pop $0
+  FileWrite $9 "set option enable-check-update=N -> Codigo: $0$\r$\n"
+  nsExec::ExecToLog '"$INSTDIR\${APP_EXE}" --option allow-auto-update N'
+  Pop $0
+  FileWrite $9 "set option allow-auto-update=N -> Codigo: $0$\r$\n"
 
   ; 7. TAREFA AGENDADA (PowerShell Agent)
   nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'
@@ -212,16 +248,15 @@ Section "Uninstall"
   DeleteRegKey HKLM "Software\RustDesk"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\${APP_NAME}"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1"
 
   ; Remove espelho 32-bit
   SetRegView 32
   DeleteRegKey HKLM "Software\Trilink\RemoteAgent"
   DeleteRegKey HKLM "Software\RustDesk"
   DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\RustDesk"
+  DeleteRegKey HKLM "Software\Microsoft\Windows\CurrentVersion\Uninstall\{54E86BC2-6C85-41F3-A9EB-1A94AC9B1F93}_is1"
   SetRegView 64
 SectionEnd
-
-
-
 
 

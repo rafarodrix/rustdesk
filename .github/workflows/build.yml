@@ -238,6 +238,7 @@ jobs:
         env:
           DISCOVERY_TOKEN: ${{ secrets.REMOTE_DISCOVERY_TOKEN }}
           PORTAL_BASE_URL: ${{ secrets.PORTAL_API_BASE_URL }}
+          INSTALL_TOKEN: ${{ secrets.REMOTE_INSTALL_TOKEN }}
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
 
@@ -258,10 +259,21 @@ jobs:
           $agentScriptAbs = (Resolve-Path "$env:AGENT_SCRIPT").Path -replace '/', '\\'
           $nsisOutputAbs = (Join-Path $pwd "$env:NSIS_OUTPUT") -replace '/', '\\'
           $portalBaseUrl = "$env:PORTAL_BASE_URL".TrimEnd('/')
+          $appVersion = (Select-String -Path "Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          $appBuildDate = (& "$appSourceDir\rustdesk.exe" --build-date | Out-String).Trim()
+          if ([string]::IsNullOrWhiteSpace($appBuildDate)) {
+            $appBuildDate = (Get-Date).ToUniversalTime().ToString("yyyy-MM-dd HH:mm")
+          }
+          if ([string]::IsNullOrWhiteSpace($appVersion)) {
+            throw "Nao foi possivel extrair version do Cargo.toml para o NSIS."
+          }
+          $installToken = "$env:INSTALL_TOKEN"
 
           Write-Host "NSIS APP_SOURCE_DIR=$appSourceDir"
           Write-Host "NSIS AGENT_SCRIPT=$agentScriptAbs"
           Write-Host "NSIS OUTFILE=$nsisOutputAbs"
+          Write-Host "NSIS APP_VERSION=$appVersion"
+          Write-Host "NSIS APP_BUILD_DATE=$appBuildDate"
 
           makensis `
             /DAPP_NAME="Trilink Suporte Remoto" `
@@ -270,6 +282,9 @@ jobs:
             /DAGENT_SCRIPT="$agentScriptAbs" `
             /DDISCOVERY_TOKEN="$env:DISCOVERY_TOKEN" `
             /DPORTAL_BASE_URL="$portalBaseUrl" `
+            /DINSTALL_TOKEN="$installToken" `
+            /DAPP_VERSION="$appVersion" `
+            /DAPP_BUILD_DATE="$appBuildDate" `
             /DOUTFILE="$nsisOutputAbs" `
             "$env:NSIS_SCRIPT"
 
