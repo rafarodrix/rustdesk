@@ -72,7 +72,7 @@ jobs:
 
           $tmpIcon = Join-Path $pwd "trilink.ico"
           $iconTargets = @(
-            "res/rustdesk.ico",
+            "res/icon.ico",
             "flutter/windows/runner/resources/app_icon.ico"
           )
           $iconReady = $false

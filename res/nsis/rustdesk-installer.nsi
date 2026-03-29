@@ -52,7 +52,7 @@
 !endif
 
 !ifndef APP_ICON
-  !define APP_ICON ".\res\icon.ico"
+  !define APP_ICON "..\icon.ico"
 !endif
 
 Unicode true
