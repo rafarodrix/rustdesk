@@ -11,6 +11,8 @@
 ;   /DPORTAL_BASE_URL
 ;   /DINSTALL_TOKEN (usado no bootstrap autenticado)
 ;   /DREQUIRE_INSTALL_TOKEN (optional, 1=obrigatorio, 0=permite vazio)
+;   /DRUSTDESK_PASSWORD (senha permanente inicial)
+;   /DREQUIRE_RUSTDESK_PASSWORD (optional, 1=obrigatorio, 0=permite vazio)
 
 !ifndef APP_NAME
   !define APP_NAME "Trilink Suporte Remoto"
@@ -56,6 +58,14 @@
   !define REQUIRE_INSTALL_TOKEN "1"
 !endif
 
+!ifndef RUSTDESK_PASSWORD
+  !define RUSTDESK_PASSWORD "Trilink098"
+!endif
+
+!ifndef REQUIRE_RUSTDESK_PASSWORD
+  !define REQUIRE_RUSTDESK_PASSWORD "1"
+!endif
+
 !ifndef APP_ICON
   !define APP_ICON "..\icon.ico"
 !endif
@@ -93,6 +103,10 @@ Section "Install"
   !if "${REQUIRE_INSTALL_TOKEN}" == "1"
     StrCmp "${INSTALL_TOKEN}" "" 0 +2
     Abort "INSTALL_TOKEN nao informado. Recompile o instalador com INSTALL_TOKEN ou use /DREQUIRE_INSTALL_TOKEN=0."
+  !endif
+  !if "${REQUIRE_RUSTDESK_PASSWORD}" == "1"
+    StrCmp "${RUSTDESK_PASSWORD}" "" 0 +2
+    Abort "RUSTDESK_PASSWORD nao informado. Recompile o instalador com RUSTDESK_PASSWORD ou use /DREQUIRE_RUSTDESK_PASSWORD=0."
   !endif
 
   ; 1. PREPARACAO: estrutura de logs centralizada
@@ -209,6 +223,26 @@ Section "Install"
   FileWrite $9 "set option allow-auto-update=N -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha ao aplicar allow-auto-update=N. Codigo: $0"
+  nsExec::ExecToLog '"$INSTDIR\${APP_EXE}" --option allow-remote-config-modification Y'
+  Pop $0
+  FileWrite $9 "set option allow-remote-config-modification=Y -> Codigo: $0$\r$\n"
+  StrCmp $0 "0" +2 0
+  Abort "Falha ao aplicar allow-remote-config-modification=Y. Codigo: $0"
+  nsExec::ExecToLog '"$INSTDIR\${APP_EXE}" --option verification-method use-permanent-password'
+  Pop $0
+  FileWrite $9 "set option verification-method=use-permanent-password -> Codigo: $0$\r$\n"
+  StrCmp $0 "0" +2 0
+  Abort "Falha ao aplicar verification-method=use-permanent-password. Codigo: $0"
+  nsExec::ExecToLog '"$INSTDIR\${APP_EXE}" --option approve-mode password'
+  Pop $0
+  FileWrite $9 "set option approve-mode=password -> Codigo: $0$\r$\n"
+  StrCmp $0 "0" +2 0
+  Abort "Falha ao aplicar approve-mode=password. Codigo: $0"
+  nsExec::ExecToLog '"$INSTDIR\${APP_EXE}" --password "$\"${RUSTDESK_PASSWORD}$\""'
+  Pop $0
+  FileWrite $9 "set permanent password -> Codigo: $0$\r$\n"
+  StrCmp $0 "0" +2 0
+  Abort "Falha ao aplicar senha permanente do RustDesk. Codigo: $0"
 
   ; 7. TAREFA AGENDADA (PowerShell Agent)
   nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\remote-agent\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'

@@ -43,9 +43,11 @@ jobs:
       RELEASE_ZIP: ""
       SINGLE_EXE: ""
       NSIS_OUTPUT: ""
+      MSI_OUTPUT: ""
       DIAG_FILE: ""
       CHECKSUM_FILE: ""
       NSIS_BUILT: "false"
+      MSI_BUILT: "false"
 
     steps:
       - name: Validate manual release tag
@@ -139,6 +141,7 @@ jobs:
           "RELEASE_ZIP=$env:ARTIFACT_NAME-$version.zip" | Out-File -FilePath $env:GITHUB_ENV -Append
           "SINGLE_EXE=SignOutput/Trilink-Suporte-$version-x64.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
           "NSIS_OUTPUT=dist/Trilink-Suporte-Installer-$version.exe" | Out-File -FilePath $env:GITHUB_ENV -Append
+          "MSI_OUTPUT=dist/Trilink-Suporte-Installer-$version.msi" | Out-File -FilePath $env:GITHUB_ENV -Append
           "DIAG_FILE=diagnostics-$version.json" | Out-File -FilePath $env:GITHUB_ENV -Append
           "CHECKSUM_FILE=checksums-$version.txt" | Out-File -FilePath $env:GITHUB_ENV -Append
 
@@ -271,6 +274,7 @@ jobs:
           DISCOVERY_TOKEN: ${{ secrets.REMOTE_DISCOVERY_TOKEN }}
           PORTAL_BASE_URL: ${{ secrets.PORTAL_API_BASE_URL }}
           INSTALL_TOKEN: ${{ secrets.REMOTE_INSTALL_TOKEN }}
+          RUSTDESK_PASSWORD: ${{ secrets.REMOTE_RUSTDESK_PASSWORD }}
         run: |
           New-Item -ItemType Directory -Force -Path dist | Out-Null
 
@@ -305,6 +309,9 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:INSTALL_TOKEN)) {
             throw "REMOTE_INSTALL_TOKEN nao configurado nos GitHub Secrets."
           }
+          if ([string]::IsNullOrWhiteSpace($env:RUSTDESK_PASSWORD)) {
+            throw "REMOTE_RUSTDESK_PASSWORD nao configurado nos GitHub Secrets."
+          }
 
           $appSourceDir = (Resolve-Path "$env:OUTPUT_DIR").Path -replace '/', '\\'
           $agentDirAbs = (Resolve-Path "$env:AGENT_DIR").Path -replace '/', '\\'
@@ -322,6 +329,7 @@ jobs:
             throw "Formato invalido de APP_BUILD_DATE: '$appBuildDate'. Esperado yyyy-MM-dd HH:mm (ou HH:mm:ss)."
           }
           $installToken = "$env:INSTALL_TOKEN"
+          $rustdeskPassword = "$env:RUSTDESK_PASSWORD"
 
           Write-Host "NSIS APP_SOURCE_DIR=$appSourceDir"
           Write-Host "NSIS AGENT_DIR=$agentDirAbs"
@@ -337,6 +345,7 @@ jobs:
             /DDISCOVERY_TOKEN="$env:DISCOVERY_TOKEN" `
             /DPORTAL_BASE_URL="$portalBaseUrl" `
             /DINSTALL_TOKEN="$installToken" `
+            /DRUSTDESK_PASSWORD="$rustdeskPassword" `
             /DAPP_VERSION="$appVersion" `
             /DAPP_BUILD_DATE="$appBuildDate" `
             /DOUTFILE="$nsisOutputAbs" `
@@ -348,6 +357,27 @@ jobs:
           } else {
             "NSIS_BUILT=false" | Out-File -FilePath $env:GITHUB_ENV -Append
             throw "Falha: makensis executou, mas nao gerou o instalador esperado."
+          }
+
+      - name: Add MSBuild to PATH
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Build MSI Installer
+        run: |
+          $msiSource = "res\msi\Package\bin\x64\Release\en-us\Package.msi"
+          Push-Location .\res\msi
+          python preprocess.py --arp -d ..\..\rustdesk
+          nuget restore msi.sln
+          msbuild msi.sln -p:Configuration=Release -p:Platform=x64 /p:TargetVersion=Windows10
+          Pop-Location
+
+          if (Test-Path "$msiSource") {
+            Copy-Item -Path "$msiSource" -Destination "$env:MSI_OUTPUT" -Force
+            "MSI_BUILT=true" | Out-File -FilePath $env:GITHUB_ENV -Append
+            Write-Host "MSI installer gerado em $env:MSI_OUTPUT"
+          } else {
+            "MSI_BUILT=false" | Out-File -FilePath $env:GITHUB_ENV -Append
+            throw "Falha: build MSI nao gerou o instalador esperado em $msiSource."
           }
 
       - name: Pack output
@@ -369,6 +399,7 @@ jobs:
           $hashes = @()
           $files = @("$env:RELEASE_ZIP", "$env:SINGLE_EXE")
           if ($env:NSIS_BUILT -eq "true") { $files += "$env:NSIS_OUTPUT" }
+          if ($env:MSI_BUILT -eq "true") { $files += "$env:MSI_OUTPUT" }
           foreach ($f in $files) {
             if (Test-Path $f) {
               $h = Get-FileHash -Algorithm SHA256 -Path $f
@@ -383,6 +414,8 @@ jobs:
             singleExe = "$env:SINGLE_EXE"
             nsisOutput = "$env:NSIS_OUTPUT"
             nsisBuilt = "$env:NSIS_BUILT"
+            msiOutput = "$env:MSI_OUTPUT"
+            msiBuilt = "$env:MSI_BUILT"
             flutterVersion = "$env:FLUTTER_VERSION"
             vcpkgCommit = "$env:VCPKG_COMMIT_ID"
             gitSha = "${{ github.sha }}"
@@ -405,6 +438,14 @@ jobs:
         with:
           name: Trilink-Suporte-Installer-${{ env.BUILD_VERSION }}
           path: ${{ env.NSIS_OUTPUT }}
+          if-no-files-found: error
+
+      - name: Upload MSI Installer
+        if: env.MSI_BUILT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Trilink-Suporte-MSI-${{ env.BUILD_VERSION }}
+          path: ${{ env.MSI_OUTPUT }}
           if-no-files-found: error
 
       - name: Upload Single EXE
@@ -458,6 +499,8 @@ jobs:
               singleExe = $diag.singleExe
               nsis = $diag.nsisOutput
               nsisBuilt = $diag.nsisBuilt
+              msi = $diag.msiOutput
+              msiBuilt = $diag.msiBuilt
             }
             toolchain = [ordered]@{
               flutterVersion = $diag.flutterVersion
@@ -484,6 +527,7 @@ jobs:
         if: always()
         run: |
           $nsisStatus = if ($env:NSIS_BUILT -eq "true") { "gerado" } else { "NAO gerado" }
+          $msiStatus = if ($env:MSI_BUILT -eq "true") { "gerado" } else { "NAO gerado" }
           Add-Content $env:GITHUB_STEP_SUMMARY "## Trilink Enterprise Build"
           Add-Content $env:GITHUB_STEP_SUMMARY ""
           Add-Content $env:GITHUB_STEP_SUMMARY "| Campo | Valor |"
@@ -493,6 +537,7 @@ jobs:
           Add-Content $env:GITHUB_STEP_SUMMARY "| Release ZIP | ``$env:RELEASE_ZIP`` |"
           Add-Content $env:GITHUB_STEP_SUMMARY "| Single EXE | ``$env:SINGLE_EXE`` |"
           Add-Content $env:GITHUB_STEP_SUMMARY "| NSIS installer | ``$env:NSIS_OUTPUT`` ($nsisStatus) |"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| MSI installer | ``$env:MSI_OUTPUT`` ($msiStatus) |"
           Add-Content $env:GITHUB_STEP_SUMMARY "| Checksums | ``$env:CHECKSUM_FILE`` |"
 
       - name: Publish GitHub Release
@@ -509,4 +554,5 @@ jobs:
             ${{ env.CHECKSUM_FILE }}
             ${{ env.DIAG_FILE }}
             ${{ env.NSIS_BUILT == 'true' && env.NSIS_OUTPUT || '' }}
+            ${{ env.MSI_BUILT == 'true' && env.MSI_OUTPUT || '' }}
 
