@@ -6,7 +6,12 @@
         [string]$ScriptVersion,
         [string]$OrchestrationStrategy,
         [bool]$BootstrapTriggered,
-        [hashtable]$BootstrapRate24h
+        [hashtable]$BootstrapRate24h,
+        [hashtable]$SchemaVersions,
+        [int]$PendingAckQueueSize,
+        [hashtable]$AckQueueFlush,
+        [string]$LastBootstrapFlow,
+        [string]$LastContractErrorCode
     )
     return [ordered]@{
         cycleElapsedMs    = [int]$CycleStopwatch.ElapsedMilliseconds
@@ -16,6 +21,11 @@
         orchestrationStrategy = [string]$OrchestrationStrategy
         bootstrapTriggered   = [bool]$BootstrapTriggered
         bootstrapRate24h     = $BootstrapRate24h
+        schemaVersions       = $SchemaVersions
+        pendingAckQueueSize  = [int]$PendingAckQueueSize
+        ackQueueFlush        = $AckQueueFlush
+        lastBootstrapFlow    = [string]$LastBootstrapFlow
+        lastContractErrorCode = [string]$LastContractErrorCode
         selfHealAttempted = [bool]$SelfHeal.selfHealAttempted
         selfHealResult    = [string]$SelfHeal.selfHealResult
     }
