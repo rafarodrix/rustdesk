@@ -210,6 +210,38 @@ jobs:
             flutter_rust_bridge_codegen --rust-input ./src/flutter_ffi.rs --dart-output ./flutter/lib/generated_bridge.dart
           }
 
+      - name: Validate Remote Agent PowerShell Parse
+        run: |
+          $agentRoot = "remote-agent"
+          if (-not (Test-Path $agentRoot)) {
+            throw "Diretorio do agente nao encontrado: $agentRoot"
+          }
+
+          $scripts = Get-ChildItem -Path $agentRoot -Recurse -File -Filter *.ps1
+          if (-not $scripts -or $scripts.Count -eq 0) {
+            throw "Nenhum script .ps1 encontrado em $agentRoot"
+          }
+
+          $parseErrors = @()
+          foreach ($script in $scripts) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors -and $errors.Count -gt 0) {
+              foreach ($err in $errors) {
+                $parseErrors += "{0}: {1}" -f $script.FullName, $err.Message
+              }
+            }
+          }
+
+          if ($parseErrors.Count -gt 0) {
+            Write-Host "Erros de parse detectados nos scripts do agente:"
+            $parseErrors | ForEach-Object { Write-Host " - $_" }
+            throw "Falha na validacao de parse dos scripts PowerShell do agente."
+          }
+
+          Write-Host "Parse OK: $($scripts.Count) script(s) .ps1 validados em $agentRoot."
+
       - name: Build Final (RustDesk Windows Upstream Mode)
         run: python .\build.py --portable --hwcodec --flutter --vram --skip-portable-pack
 
@@ -247,6 +279,22 @@ jobs:
           }
           if (-not (Test-Path "$env:AGENT_DIR")) {
             throw "Diretorio do agente nao encontrado: $env:AGENT_DIR"
+          }
+          $requiredAgentFiles = @(
+            "trilink-agente.ps1",
+            "core\\paths.ps1",
+            "core\\config.ps1",
+            "core\\logging.ps1",
+            "application\\sync.ps1",
+            "application\\ack.ps1",
+            "providers\\rustdesk.ps1",
+            "providers\\syspro.ps1"
+          )
+          foreach ($rel in $requiredAgentFiles) {
+            $full = Join-Path "$env:AGENT_DIR" $rel
+            if (-not (Test-Path $full)) {
+              throw "AGENT_DIR invalido: arquivo obrigatorio ausente: $full"
+            }
           }
           if ([string]::IsNullOrWhiteSpace($env:DISCOVERY_TOKEN)) {
             throw "REMOTE_DISCOVERY_TOKEN nao configurado nos GitHub Secrets."

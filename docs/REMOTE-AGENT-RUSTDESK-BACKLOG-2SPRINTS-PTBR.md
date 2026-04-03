@@ -3,6 +3,13 @@
 Data base: 2026-04-03  
 Escopo: evoluir confiabilidade do agente, upgrade seguro do RustDesk e prontidao de rollout.
 
+## Baseline tecnico atual (HEAD)
+
+- Catalogo de `reasonCode` de ACK centralizado no agente (`Resolve-AckReasonCode`).
+- Metricas do ciclo ampliadas com `schemaVersions`, `pendingAckQueueSize`, `ackQueueFlush`, `lastBootstrapFlow`, `lastContractErrorCode`.
+- Estado persistente ampliado com `lastBootstrapFlow` e `lastContractErrorCode`.
+- Contratos de erro HTTP por fase ja registrados como codigo tecnico (`DISCOVER_HTTP_*`, `BOOTSTRAP_HTTP_*`, `SYNC_HTTP_*`, `ACK_HTTP_*`).
+
 ## Objetivo de negocio
 
 - Reduzir falhas de campo (sync/ack/upgrade) antes de ampliar rollout.
@@ -38,6 +45,7 @@ Objetivo: estabilizar release pipeline e contrato operacional do agente.
 - Tarefas:
   - Garantir `cycleId` em todos os eventos de fase.
   - Padronizar codigos: `discover_failed`, `bootstrap_failed`, `sync_failed`, `ack_failed`, `upgrade_failed`.
+  - Padronizar tambem codigos de contrato (`*_HTTP_*`, `*_MISSING_*`, `PHASE_TIMEOUT_*`) e manter tabela de referencia.
 - Criterio de aceite:
   - Suporte consegue filtrar um ciclo completo por `cycleId`.
   - Todos os erros de fase possuem codigo consistente.
@@ -46,8 +54,10 @@ Objetivo: estabilizar release pipeline e contrato operacional do agente.
 - Tarefas:
   - Consolidar tempos de `discover/bootstrap/sync/ack`.
   - Incluir contadores de comando (`ackCount`) e falhas consecutivas.
+  - Garantir envio consistente de `schemaVersions`, `pendingAckQueueSize`, `ackQueueFlush`, `lastBootstrapFlow`, `lastContractErrorCode`.
 - Criterio de aceite:
   - Payload de sync envia metrica com fases e tempos.
+  - Payload de sync inclui os novos campos de contrato/fila sem quebra de compatibilidade.
   - Dashboard (ou consulta backend) identifica hosts com degradacao.
 
 ### EPIC 3 - Contrato de comandos (P0)
@@ -56,9 +66,11 @@ Objetivo: estabilizar release pipeline e contrato operacional do agente.
 - Tarefas:
   - Definir campos obrigatorios por versao (`id`, `type`, `payload`).
   - Definir estados de retorno (`ACKNOWLEDGED`, `FAILED`) e semantica.
+  - Versionar e documentar `reasonCode` de ACK (catalogo canonico backend/agente).
 - Criterio de aceite:
   - Comando sem `id` nao quebra ciclo e gera log padrao.
   - Backend e agente aceitam versao atual e imediatamente anterior.
+  - `reasonCode` desconhecido no backend gera alerta controlado, sem quebra de fluxo.
 
 6. Teste de integracao de comandos criticos
 - Tarefas:
@@ -147,4 +159,3 @@ Objetivo: upgrade seguro do RustDesk e rollout gradual com rollback.
   - Mitigacao: rollout em anel + kill switch + rollback automatico.
 - Risco: drift entre backend e agente no contrato de comando.
   - Mitigacao: schema versionado e teste de compatibilidade.
-
