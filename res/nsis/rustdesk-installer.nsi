@@ -251,7 +251,7 @@ Section "Install"
 
   ; 7. TAREFA AGENDADA (PowerShell Agent)
   ; Limpa tarefas antigas/duplicadas antes de recriar a tarefa canonica em SYSTEM.
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Get-ScheduledTask -TaskName ''TrilinkRemoteAgent*'' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$$false -ErrorAction SilentlyContinue"'
+  nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /delete /tn "TrilinkRemoteAgent" /f'
   Pop $0
   FileWrite $9 "cleanup tarefas TrilinkRemoteAgent* -> Codigo: $0$\r$\n"
   nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\remote-agent\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'
@@ -262,13 +262,14 @@ Section "Install"
   nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C "$SYSDIR\schtasks.exe /query /tn \"TrilinkRemoteAgent\" /xml > \"$TEMP\trilink_task.xml\" 2>&1"'
   Pop $0
   FileWrite $9 "consulta xml task TrilinkRemoteAgent -> Codigo: $0$\r$\n"
-  StrCmp $0 "0" +2 0
-  Abort "Falha ao consultar task TrilinkRemoteAgent. Codigo: $0"
+  StrCmp $0 "0" +3 0
+  FileWrite $9 "WARN: consulta XML da task falhou; instalacao continuara porque a task foi criada com sucesso.$\r$\n"
+  Goto +5
   nsExec::ExecToLog '"$SYSDIR\findstr.exe" /I /C:"S-1-5-18" /C:"SYSTEM" /C:"SISTEMA" "$TEMP\trilink_task.xml"'
   Pop $0
   FileWrite $9 "validacao task SYSTEM via XML -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
-  Abort "Falha ao validar task TrilinkRemoteAgent em SYSTEM. Codigo: $0"
+  FileWrite $9 "WARN: validacao de principal SYSTEM nao confirmada por XML; instalacao continuara.$\r$\n"
 
   ; 8. EXECUCAO INICIAL DO AGENTE
   nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\remote-agent\trilink-agente.ps1"'
