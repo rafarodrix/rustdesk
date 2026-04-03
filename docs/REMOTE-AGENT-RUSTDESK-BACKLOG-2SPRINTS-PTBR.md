@@ -151,6 +151,12 @@ Objetivo: upgrade seguro do RustDesk e rollout gradual com rollback.
 - Ambiente de VM para smoke test de instalacao.
 - Endpoint backend para coleta de metricas/estado de comando.
 
+## Nota operacional (MSI)
+
+- No estado atual, o MSI deve ser tratado como **engine update only**.
+- O onboarding Trilink completo (registro `HKLM\Software\Trilink\RemoteAgent`, task `TrilinkRemoteAgent` em `SYSTEM`, execucao inicial e post-check de sync) permanece no fluxo NSIS.
+- Antes de promover MSI como instalador principal, portar essas etapas para Custom Actions do MSI.
+
 ## Riscos e mitigacao
 
 - Risco: regressao silenciosa no instalador.

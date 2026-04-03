@@ -15,6 +15,14 @@ on:
         description: "Tag de release para workflow manual (ex: v2026.03.1)"
         required: false
         type: string
+      rollout_policy:
+        description: "Politica do post-check do instalador NSIS"
+        required: false
+        type: choice
+        options:
+          - canary
+          - broad
+        default: canary
 
 concurrency:
   group: trilink-enterprise-build-${{ github.ref }}
@@ -44,6 +52,7 @@ jobs:
       SINGLE_EXE: ""
       NSIS_OUTPUT: ""
       MSI_OUTPUT: ""
+      NSIS_REQUIRE_POSTCHECK_SYNC_OK: "1"
       DIAG_FILE: ""
       CHECKSUM_FILE: ""
       NSIS_BUILT: "false"
@@ -144,6 +153,16 @@ jobs:
           "MSI_OUTPUT=dist/Trilink-Suporte-Installer-$version.msi" | Out-File -FilePath $env:GITHUB_ENV -Append
           "DIAG_FILE=diagnostics-$version.json" | Out-File -FilePath $env:GITHUB_ENV -Append
           "CHECKSUM_FILE=checksums-$version.txt" | Out-File -FilePath $env:GITHUB_ENV -Append
+
+      - name: Resolve NSIS Post-Check Policy
+        run: |
+          $policy = "canary"
+          if ("${{ github.event_name }}" -eq "workflow_dispatch" -and -not [string]::IsNullOrWhiteSpace("${{ github.event.inputs.rollout_policy }}")) {
+            $policy = "${{ github.event.inputs.rollout_policy }}"
+          }
+          $requirePostcheck = if ($policy -eq "broad") { "0" } else { "1" }
+          "NSIS_REQUIRE_POSTCHECK_SYNC_OK=$requirePostcheck" | Out-File -FilePath $env:GITHUB_ENV -Append
+          Write-Host "NSIS post-check policy: $policy (REQUIRE_POSTCHECK_SYNC_OK=$requirePostcheck)"
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -341,6 +360,7 @@ jobs:
           Write-Host "NSIS OUTFILE=$nsisOutputAbs"
           Write-Host "NSIS APP_VERSION=$appVersion"
           Write-Host "NSIS APP_BUILD_DATE=$appBuildDate"
+          Write-Host "NSIS REQUIRE_POSTCHECK_SYNC_OK=$env:NSIS_REQUIRE_POSTCHECK_SYNC_OK"
 
           makensis `
             /DAPP_NAME="Trilink Suporte Remoto" `
@@ -351,6 +371,7 @@ jobs:
             /DPORTAL_BASE_URL="$portalBaseUrl" `
             /DINSTALL_TOKEN="$installToken" `
             /DRUSTDESK_PASSWORD="$rustdeskPassword" `
+            /DREQUIRE_POSTCHECK_SYNC_OK="$env:NSIS_REQUIRE_POSTCHECK_SYNC_OK" `
             /DAPP_VERSION="$appVersion" `
             /DAPP_BUILD_DATE="$appBuildDate" `
             /DOUTFILE="$nsisOutputAbs" `
@@ -449,7 +470,7 @@ jobs:
         if: env.MSI_BUILT == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: Trilink-Suporte-MSI-${{ env.BUILD_VERSION }}
+          name: Trilink-Suporte-Engine-MSI-${{ env.BUILD_VERSION }}
           path: ${{ env.MSI_OUTPUT }}
           if-no-files-found: error
 
@@ -543,6 +564,8 @@ jobs:
           Add-Content $env:GITHUB_STEP_SUMMARY "| Single EXE | ``$env:SINGLE_EXE`` |"
           Add-Content $env:GITHUB_STEP_SUMMARY "| NSIS installer | ``$env:NSIS_OUTPUT`` ($nsisStatus) |"
           Add-Content $env:GITHUB_STEP_SUMMARY "| MSI installer | ``$env:MSI_OUTPUT`` ($msiStatus) |"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| MSI profile | **Engine update only (sem onboarding Trilink completo)** |"
+          Add-Content $env:GITHUB_STEP_SUMMARY "| NSIS post-check | ``REQUIRE_POSTCHECK_SYNC_OK=$env:NSIS_REQUIRE_POSTCHECK_SYNC_OK`` |"
           Add-Content $env:GITHUB_STEP_SUMMARY "| Checksums | ``$env:CHECKSUM_FILE`` |"
 
       - name: Publish GitHub Release

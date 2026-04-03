@@ -7,9 +7,13 @@ Responsavel pela execucao: ____________________
 ## 1. Pre-validacao
 
 - [ ] Release publicada e artefato conferido
+- [ ] Politica de rollout definida:
+  - `canary` => NSIS com `REQUIRE_POSTCHECK_SYNC_OK=1`
+  - `broad` => NSIS com `REQUIRE_POSTCHECK_SYNC_OK=0` (temporario, para ambientes instaveis)
 - [ ] Script oficial baixado por `GET /api/remote/agents/discovery-script`
 - [ ] Ambiente com `REMOTE_DISCOVERY_TOKEN` valido
 - [ ] Host RustDesk e API do portal conferidos
+- [ ] Se usar MSI: tratar como **engine update only** (sem onboarding Trilink completo)
 
 ## 2. Fluxo A - Descoberta sem pre-cadastro
 
