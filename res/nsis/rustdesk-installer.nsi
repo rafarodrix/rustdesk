@@ -259,9 +259,14 @@ Section "Install"
   FileWrite $9 "schtasks create TrilinkRemoteAgent -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha ao criar tarefa agendada TrilinkRemoteAgent. Codigo: $0"
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "if ((Get-ScheduledTask -TaskName ''TrilinkRemoteAgent'' -ErrorAction Stop).Principal.UserId -notin @(''SYSTEM'',''NT AUTHORITY\\SYSTEM'')) { throw ''Task TrilinkRemoteAgent nao esta em SYSTEM.'' }"'
+  nsExec::ExecToLog '"$SYSDIR\cmd.exe" /C "$SYSDIR\schtasks.exe /query /tn \"TrilinkRemoteAgent\" /xml > \"$TEMP\trilink_task.xml\" 2>&1"'
   Pop $0
-  FileWrite $9 "validacao task SYSTEM -> Codigo: $0$\r$\n"
+  FileWrite $9 "consulta xml task TrilinkRemoteAgent -> Codigo: $0$\r$\n"
+  StrCmp $0 "0" +2 0
+  Abort "Falha ao consultar task TrilinkRemoteAgent. Codigo: $0"
+  nsExec::ExecToLog '"$SYSDIR\findstr.exe" /I /C:"S-1-5-18" /C:"SYSTEM" /C:"SISTEMA" "$TEMP\trilink_task.xml"'
+  Pop $0
+  FileWrite $9 "validacao task SYSTEM via XML -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha ao validar task TrilinkRemoteAgent em SYSTEM. Codigo: $0"
 
