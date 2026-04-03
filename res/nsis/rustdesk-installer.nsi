@@ -6,7 +6,7 @@
 ;   /DOUTFILE
 ;   /DAPP_VERSION (optional, defaults to Cargo version)
 ;   /DAPP_BUILD_DATE (optional, defaults to build timestamp)
-;   /DAGENT_SCRIPT (optional, defaults to trilink-agente.ps1 in repo root)
+;   /DAGENT_DIR (optional, defaults to remote-agent in repo root)
 ;   /DDISCOVERY_TOKEN
 ;   /DPORTAL_BASE_URL
 ;   /DINSTALL_TOKEN (optional, usado no bootstrap autenticado)
@@ -35,8 +35,8 @@
   !define APP_BUILD_DATE "1970-01-01 00:00"
 !endif
 
-!ifndef AGENT_SCRIPT
-  !define AGENT_SCRIPT "trilink-agente.ps1"
+!ifndef AGENT_DIR
+  !define AGENT_DIR "remote-agent"
 !endif
 
 !ifndef DISCOVERY_TOKEN
@@ -111,7 +111,8 @@ Section "Install"
   FileWrite $9 "Copiando binarios para $INSTDIR...$\r$\n"
   SetOutPath "$INSTDIR"
   File /r "${APP_SOURCE_DIR}\*"
-  File "${AGENT_SCRIPT}"
+  SetOutPath "$INSTDIR\remote-agent"
+  File /r "${AGENT_DIR}\*"
 
   ; 4. REGISTRO TRILINK + LOCKS DE UPDATE/PATH
   FileWrite $9 "Aplicando configuracoes de registro...$\r$\n"
@@ -201,14 +202,14 @@ Section "Install"
   Abort "Falha ao aplicar allow-auto-update=N. Codigo: $0"
 
   ; 7. TAREFA AGENDADA (PowerShell Agent)
-  nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'
+  nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\remote-agent\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'
   Pop $0
   FileWrite $9 "schtasks create TrilinkRemoteAgent -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha ao criar tarefa agendada TrilinkRemoteAgent. Codigo: $0"
 
   ; 8. EXECUCAO INICIAL DO AGENTE
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\trilink-agente.ps1"'
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\remote-agent\trilink-agente.ps1"'
   Pop $0
   FileWrite $9 "execucao inicial do agente -> Codigo: $0$\r$\n"
   FileWrite $9 "--- Fim do log de instalacao ---$\r$\n"

@@ -37,7 +37,7 @@ jobs:
       VCPKG_COMMIT_ID: 120deac3062162151622ca4860575a33844ba10b
       FLUTTER_VERSION: 3.24.5
       NSIS_SCRIPT: res/nsis/rustdesk-installer.nsi
-      AGENT_SCRIPT: trilink-agente.ps1
+      AGENT_DIR: remote-agent
       PORTAL_METADATA_ENDPOINT: /api/remote/rustdesk/build-metadata
       BUILD_VERSION: ""
       RELEASE_ZIP: ""
@@ -245,8 +245,8 @@ jobs:
           if (-not (Test-Path "$env:NSIS_SCRIPT")) {
             throw "Script NSIS nao encontrado: $env:NSIS_SCRIPT"
           }
-          if (-not (Test-Path "$env:AGENT_SCRIPT")) {
-            throw "Script do agente nao encontrado: $env:AGENT_SCRIPT"
+          if (-not (Test-Path "$env:AGENT_DIR")) {
+            throw "Diretorio do agente nao encontrado: $env:AGENT_DIR"
           }
           if ([string]::IsNullOrWhiteSpace($env:DISCOVERY_TOKEN)) {
             throw "REMOTE_DISCOVERY_TOKEN nao configurado nos GitHub Secrets."
@@ -256,7 +256,7 @@ jobs:
           }
 
           $appSourceDir = (Resolve-Path "$env:OUTPUT_DIR").Path -replace '/', '\\'
-          $agentScriptAbs = (Resolve-Path "$env:AGENT_SCRIPT").Path -replace '/', '\\'
+          $agentDirAbs = (Resolve-Path "$env:AGENT_DIR").Path -replace '/', '\\'
           $nsisOutputAbs = (Join-Path $pwd "$env:NSIS_OUTPUT") -replace '/', '\\'
           $portalBaseUrl = "$env:PORTAL_BASE_URL".TrimEnd('/')
           $appVersion = (Select-String -Path "Cargo.toml" -Pattern '^version\s*=\s*"([^"]+)"' | Select-Object -First 1).Matches[0].Groups[1].Value
@@ -273,7 +273,7 @@ jobs:
           $installToken = "$env:INSTALL_TOKEN"
 
           Write-Host "NSIS APP_SOURCE_DIR=$appSourceDir"
-          Write-Host "NSIS AGENT_SCRIPT=$agentScriptAbs"
+          Write-Host "NSIS AGENT_DIR=$agentDirAbs"
           Write-Host "NSIS OUTFILE=$nsisOutputAbs"
           Write-Host "NSIS APP_VERSION=$appVersion"
           Write-Host "NSIS APP_BUILD_DATE=$appBuildDate"
@@ -282,7 +282,7 @@ jobs:
             /DAPP_NAME="Trilink Suporte Remoto" `
             /DAPP_EXE="rustdesk.exe" `
             /DAPP_SOURCE_DIR="$appSourceDir" `
-            /DAGENT_SCRIPT="$agentScriptAbs" `
+            /DAGENT_DIR="$agentDirAbs" `
             /DDISCOVERY_TOKEN="$env:DISCOVERY_TOKEN" `
             /DPORTAL_BASE_URL="$portalBaseUrl" `
             /DINSTALL_TOKEN="$installToken" `
