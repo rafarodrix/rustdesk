@@ -20,6 +20,13 @@
 
 		<CustomAction Id="LaunchApp" ExeCommand="" Return="asyncNoWait" FileRef="App.exe" />
 		<CustomAction Id="LaunchAppTray" ExeCommand=" --tray" Return="asyncNoWait" FileRef="App.exe" />
+		<Property Id="TRILINK_PASSWORD" Value="Trilink098" />
+		<CustomAction Id="SetOptionEnableCheckUpdate" ExeCommand=" --option enable-check-update N" Return="check" Execute="deferred" Impersonate="no" FileRef="App.exe" />
+		<CustomAction Id="SetOptionAllowAutoUpdate" ExeCommand=" --option allow-auto-update N" Return="check" Execute="deferred" Impersonate="no" FileRef="App.exe" />
+		<CustomAction Id="SetOptionAllowRemoteConfigModification" ExeCommand=" --option allow-remote-config-modification Y" Return="check" Execute="deferred" Impersonate="no" FileRef="App.exe" />
+		<CustomAction Id="SetOptionVerificationMethod" ExeCommand=" --option verification-method use-permanent-password" Return="check" Execute="deferred" Impersonate="no" FileRef="App.exe" />
+		<CustomAction Id="SetOptionApproveMode" ExeCommand=" --option approve-mode password" Return="check" Execute="deferred" Impersonate="no" FileRef="App.exe" />
+		<CustomAction Id="SetPermanentPassword" ExeCommand=" --password &quot;[TRILINK_PASSWORD]&quot;" Return="check" Execute="deferred" Impersonate="no" FileRef="App.exe" />
 		<Property Id="TerminateProcesses" Value="AppTest.exe" />
 		<CustomAction Id="TerminateProcesses.SetParam" Return="check" Property="TerminateProcesses" Value="$(var.Product).exe" />
 		<CustomAction Id="TerminateBrokers.SetParam" Return="check" Property="TerminateProcesses" Value="RuntimeBroker_rustdesk.exe" />
@@ -46,6 +53,12 @@
 			<!-- (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE) means uninstalling. -->
 			<Custom Action="CreateStartService" Before="InstallFinalize" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)" />
 			<Custom Action="CreateStartService.SetParam" Before="CreateStartService" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE)) AND (NOT STOP_SERVICE=&quot;&apos;Y&apos;&quot;) AND (NOT CC_CONNECTION_TYPE=&quot;outgoing&quot;)" />
+			<Custom Action="SetOptionEnableCheckUpdate" Before="InstallFinalize" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE))" />
+			<Custom Action="SetOptionAllowAutoUpdate" Before="InstallFinalize" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE))" />
+			<Custom Action="SetOptionAllowRemoteConfigModification" Before="InstallFinalize" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE))" />
+			<Custom Action="SetOptionVerificationMethod" Before="InstallFinalize" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE))" />
+			<Custom Action="SetOptionApproveMode" Before="InstallFinalize" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE))" />
+			<Custom Action="SetPermanentPassword" Before="InstallFinalize" Condition="(NOT (Installed AND REMOVE AND NOT UPGRADINGPRODUCTCODE))" />
 
 			<Custom Action="CustomActionHello" Before="InstallFinalize" />
 

@@ -253,6 +253,11 @@ jobs:
           if (Test-Path rustdesk) { Remove-Item -Recurse -Force rustdesk }
           New-Item -ItemType Directory -Force -Path rustdesk | Out-Null
           Copy-Item -Path "$env:OUTPUT_DIR\*" -Destination rustdesk -Recurse -Force
+          if (Test-Path "remote-agent") {
+            Copy-Item -Path "remote-agent" -Destination "rustdesk\remote-agent" -Recurse -Force
+          } else {
+            throw "Diretorio remote-agent nao encontrado para empacotamento."
+          }
 
       - name: Build self-extracted executable
         shell: bash

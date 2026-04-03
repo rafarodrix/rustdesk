@@ -13,6 +13,7 @@
 ;   /DREQUIRE_INSTALL_TOKEN (optional, 1=obrigatorio, 0=permite vazio)
 ;   /DRUSTDESK_PASSWORD (senha permanente inicial)
 ;   /DREQUIRE_RUSTDESK_PASSWORD (optional, 1=obrigatorio, 0=permite vazio)
+;   /DREQUIRE_POSTCHECK_SYNC_OK (optional, 1=obrigatorio, 0=permite instalacao sem sync OK)
 
 !ifndef APP_NAME
   !define APP_NAME "Trilink Suporte Remoto"
@@ -64,6 +65,10 @@
 
 !ifndef REQUIRE_RUSTDESK_PASSWORD
   !define REQUIRE_RUSTDESK_PASSWORD "1"
+!endif
+
+!ifndef REQUIRE_POSTCHECK_SYNC_OK
+  !define REQUIRE_POSTCHECK_SYNC_OK "1"
 !endif
 
 !ifndef APP_ICON
@@ -245,16 +250,34 @@ Section "Install"
   Abort "Falha ao aplicar senha permanente do RustDesk. Codigo: $0"
 
   ; 7. TAREFA AGENDADA (PowerShell Agent)
+  ; Limpa tarefas antigas/duplicadas antes de recriar a tarefa canonica em SYSTEM.
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Get-ScheduledTask -TaskName ''TrilinkRemoteAgent*'' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue"'
+  Pop $0
+  FileWrite $9 "cleanup tarefas TrilinkRemoteAgent* -> Codigo: $0$\r$\n"
   nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\remote-agent\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'
   Pop $0
   FileWrite $9 "schtasks create TrilinkRemoteAgent -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha ao criar tarefa agendada TrilinkRemoteAgent. Codigo: $0"
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$t=Get-ScheduledTask -TaskName ''TrilinkRemoteAgent'' -ErrorAction Stop; if($t.Principal.UserId -ne ''SYSTEM'' -and $t.Principal.UserId -ne ''NT AUTHORITY\SYSTEM''){ throw ''Task TrilinkRemoteAgent nao esta em SYSTEM.'' }"'
+  Pop $0
+  FileWrite $9 "validacao task SYSTEM -> Codigo: $0$\r$\n"
+  StrCmp $0 "0" +2 0
+  Abort "Falha ao validar task TrilinkRemoteAgent em SYSTEM. Codigo: $0"
 
   ; 8. EXECUCAO INICIAL DO AGENTE
   nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "$INSTDIR\remote-agent\trilink-agente.ps1"'
   Pop $0
   FileWrite $9 "execucao inicial do agente -> Codigo: $0$\r$\n"
+  StrCmp $0 "0" +2 0
+  Abort "Falha na execucao inicial do agente. Codigo: $0"
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$svc=Get-Service -Name ''RustDesk'' -ErrorAction SilentlyContinue; if($null -eq $svc -or $svc.Status -ne ''Running''){ throw ''Servico RustDesk nao esta Running apos instalacao.'' }; $log=''C:\Trilink\Remote\Logs\agentRemote.log''; if(-not (Test-Path $log)){ throw ''Log do agente nao encontrado.'' }; $item=Get-Item $log; if($item.LastWriteTime -lt (Get-Date).AddMinutes(-10)){ throw ''Log do agente desatualizado apos instalacao.'' }; $recent=Get-Content $log -Tail 200 -ErrorAction SilentlyContinue; if($recent -notmatch ''sync OK''){ throw ''sync OK nao encontrado no log inicial do agente.'' }"'
+  Pop $0
+  FileWrite $9 "post-check servico/log/sync -> Codigo: $0$\r$\n"
+  !if "${REQUIRE_POSTCHECK_SYNC_OK}" == "1"
+    StrCmp $0 "0" +2 0
+    Abort "Falha no post-check do agente (servico/log/sync). Codigo: $0"
+  !endif
   FileWrite $9 "--- Fim do log de instalacao ---$\r$\n"
   FileClose $9
 
