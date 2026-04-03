@@ -34,7 +34,7 @@ function Get-SysproChangelogVersion {
 }
 
 function Get-SysproUpdates {
-    Write-Log "Iniciando verificacao de caminho fixo: \\Syspro\\Server"
+    Write-Log "Iniciando verificacao de caminho fixo: \Syspro\Server"
     $results = @()
 
     $drives = @(Get-PSDrive -PSProvider FileSystem -ErrorAction SilentlyContinue | Where-Object {

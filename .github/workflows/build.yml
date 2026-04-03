@@ -302,6 +302,9 @@ jobs:
           if ([string]::IsNullOrWhiteSpace($env:PORTAL_BASE_URL)) {
             throw "PORTAL_API_BASE_URL nao configurado nos GitHub Secrets."
           }
+          if ([string]::IsNullOrWhiteSpace($env:INSTALL_TOKEN)) {
+            throw "REMOTE_INSTALL_TOKEN nao configurado nos GitHub Secrets."
+          }
 
           $appSourceDir = (Resolve-Path "$env:OUTPUT_DIR").Path -replace '/', '\\'
           $agentDirAbs = (Resolve-Path "$env:AGENT_DIR").Path -replace '/', '\\'

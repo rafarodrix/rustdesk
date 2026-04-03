@@ -9,7 +9,8 @@
 ;   /DAGENT_DIR (optional, defaults to remote-agent in repo root)
 ;   /DDISCOVERY_TOKEN
 ;   /DPORTAL_BASE_URL
-;   /DINSTALL_TOKEN (optional, usado no bootstrap autenticado)
+;   /DINSTALL_TOKEN (usado no bootstrap autenticado)
+;   /DREQUIRE_INSTALL_TOKEN (optional, 1=obrigatorio, 0=permite vazio)
 
 !ifndef APP_NAME
   !define APP_NAME "Trilink Suporte Remoto"
@@ -51,6 +52,10 @@
   !define INSTALL_TOKEN ""
 !endif
 
+!ifndef REQUIRE_INSTALL_TOKEN
+  !define REQUIRE_INSTALL_TOKEN "1"
+!endif
+
 !ifndef APP_ICON
   !define APP_ICON "..\icon.ico"
 !endif
@@ -85,6 +90,10 @@ Section "Install"
   Abort "DISCOVERY_TOKEN nao informado. Recompile o instalador."
   StrCmp "${PORTAL_BASE_URL}" "" 0 +2
   Abort "PORTAL_BASE_URL nao informado. Recompile o instalador."
+  !if "${REQUIRE_INSTALL_TOKEN}" == "1"
+    StrCmp "${INSTALL_TOKEN}" "" 0 +2
+    Abort "INSTALL_TOKEN nao informado. Recompile o instalador com INSTALL_TOKEN ou use /DREQUIRE_INSTALL_TOKEN=0."
+  !endif
 
   ; 1. PREPARACAO: estrutura de logs centralizada
   CreateDirectory "C:\Trilink\Remote\Logs"
