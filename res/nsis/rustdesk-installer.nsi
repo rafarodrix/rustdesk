@@ -251,7 +251,7 @@ Section "Install"
 
   ; 7. TAREFA AGENDADA (PowerShell Agent)
   ; Limpa tarefas antigas/duplicadas antes de recriar a tarefa canonica em SYSTEM.
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Get-ScheduledTask -TaskName ''TrilinkRemoteAgent*'' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$false -ErrorAction SilentlyContinue"'
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "Get-ScheduledTask -TaskName ''TrilinkRemoteAgent*'' -ErrorAction SilentlyContinue | Unregister-ScheduledTask -Confirm:$$false -ErrorAction SilentlyContinue"'
   Pop $0
   FileWrite $9 "cleanup tarefas TrilinkRemoteAgent* -> Codigo: $0$\r$\n"
   nsExec::ExecToLog '"$SYSDIR\schtasks.exe" /create /tn "TrilinkRemoteAgent" /tr "powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $\"$INSTDIR\remote-agent\trilink-agente.ps1$\"" /sc minute /mo 5 /ru "SYSTEM" /f'
@@ -259,7 +259,7 @@ Section "Install"
   FileWrite $9 "schtasks create TrilinkRemoteAgent -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha ao criar tarefa agendada TrilinkRemoteAgent. Codigo: $0"
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$t=Get-ScheduledTask -TaskName ''TrilinkRemoteAgent'' -ErrorAction Stop; if($t.Principal.UserId -ne ''SYSTEM'' -and $t.Principal.UserId -ne ''NT AUTHORITY\SYSTEM''){ throw ''Task TrilinkRemoteAgent nao esta em SYSTEM.'' }"'
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "if ((Get-ScheduledTask -TaskName ''TrilinkRemoteAgent'' -ErrorAction Stop).Principal.UserId -notin @(''SYSTEM'',''NT AUTHORITY\\SYSTEM'')) { throw ''Task TrilinkRemoteAgent nao esta em SYSTEM.'' }"'
   Pop $0
   FileWrite $9 "validacao task SYSTEM -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
@@ -271,7 +271,7 @@ Section "Install"
   FileWrite $9 "execucao inicial do agente -> Codigo: $0$\r$\n"
   StrCmp $0 "0" +2 0
   Abort "Falha na execucao inicial do agente. Codigo: $0"
-  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "$svc=Get-Service -Name ''RustDesk'' -ErrorAction SilentlyContinue; if($null -eq $svc -or $svc.Status -ne ''Running''){ throw ''Servico RustDesk nao esta Running apos instalacao.'' }; $log=''C:\Trilink\Remote\Logs\agentRemote.log''; if(-not (Test-Path $log)){ throw ''Log do agente nao encontrado.'' }; $item=Get-Item $log; if($item.LastWriteTime -lt (Get-Date).AddMinutes(-10)){ throw ''Log do agente desatualizado apos instalacao.'' }; $recent=Get-Content $log -Tail 200 -ErrorAction SilentlyContinue; if($recent -notmatch ''sync OK''){ throw ''sync OK nao encontrado no log inicial do agente.'' }"'
+  nsExec::ExecToLog 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -Command "if ((Get-Service -Name ''RustDesk'' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Status -ErrorAction SilentlyContinue) -ne ''Running'') { throw ''Servico RustDesk nao esta Running apos instalacao.'' }; if (-not (Test-Path ''C:\Trilink\Remote\Logs\agentRemote.log'')) { throw ''Log do agente nao encontrado.'' }; if ((Get-Item ''C:\Trilink\Remote\Logs\agentRemote.log'' -ErrorAction Stop).LastWriteTime -lt (Get-Date).AddMinutes(-10)) { throw ''Log do agente desatualizado apos instalacao.'' }; if (-not ((Get-Content ''C:\Trilink\Remote\Logs\agentRemote.log'' -Tail 200 -ErrorAction SilentlyContinue) -match ''sync OK'')) { throw ''sync OK nao encontrado no log inicial do agente.'' }"'
   Pop $0
   FileWrite $9 "post-check servico/log/sync -> Codigo: $0$\r$\n"
   !if "${REQUIRE_POSTCHECK_SYNC_OK}" == "1"
