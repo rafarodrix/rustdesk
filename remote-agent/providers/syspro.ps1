@@ -1,4 +1,4 @@
-﻿function Get-SysproChangelogVersion {
+function Get-SysproChangelogVersion {
     param([string]$InstallPath)
     try {
         $changelogPath = Join-Path $InstallPath "Update\change-log.txt"
@@ -7,7 +7,7 @@
             return ""
         }
 
-        # FIX: fallback para ANSI/Default â€” arquivos legados Syspro podem nao ser UTF-8
+        # FIX: fallback para ANSI/Default — arquivos legados Syspro podem nao ser UTF-8
         $content = $null
         try {
             $content = Get-Content -Path $changelogPath -Raw -Encoding UTF8 -ErrorAction Stop
@@ -78,4 +78,3 @@ function Get-SysproUpdates {
     Write-Log "Verificacao concluida. Total encontrado: $($results.Count)"
     return $results
 }
-
